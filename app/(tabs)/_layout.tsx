@@ -1,33 +1,55 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
-
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Tabs, useRouter } from "expo-router";
+import React from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { Pressable } from "react-native";
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const router = useRouter();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
+        tabBarActiveTintColor: "#1e88e5",
+        headerRight: () => (
+          <Pressable
+            onPress={() => router.push("/connect")}
+            style={{ marginRight: 15 }}
+          >
+            <Ionicons name="settings-outline" size={24} color="#333" />
+          </Pressable>
+        ),
+      }}
+    >
+      {/* Scherm 1: Vandaag */}
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          title: "Vandaag",
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="today" size={28} color={color} />
+          ),
         }}
       />
+
+      {/* Scherm 2: Medicijnen Lijst (zorg dat bestandsnaam medicijnen.tsx is!) */}
       <Tabs.Screen
-        name="explore"
+        name="medications"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: "Medicijnen",
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="list" size={28} color={color} />
+          ),
+        }}
+      />
+
+      {/* Scherm 3: Robot */}
+      <Tabs.Screen
+        name="robot"
+        options={{
+          title: "Robot",
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="game-controller" size={28} color={color} />
+          ),
         }}
       />
     </Tabs>

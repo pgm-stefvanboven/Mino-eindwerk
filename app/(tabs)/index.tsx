@@ -1,61 +1,99 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, Alert, StyleSheet } from "react-native";
-import { Pi } from "../../services/pi";
-import { useRouter } from "expo-router";
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import React, { useState } from "react";
+import {
+  StyleSheet,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
-export default function TodayScreen() {
-  const router = useRouter();
-  const [healthTime, setHealthTime] = useState<string>("");
+// Dit is nep-data. Later haal je dit op via Pi.getMeds()
+const INITIAL_TASKS = [
+  { id: 1, time: "08:00", name: "3x Paracetamol", taken: false },
+  { id: 2, time: "12:00", name: "1x Bloeddrukpil", taken: false },
+  { id: 3, time: "20:00", name: "1x Vitamine D", taken: false },
+];
 
-  useEffect(() => {
-    Pi.health()
-      .then((d) => setHealthTime(d.time))
-      .catch((e) => Alert.alert("Fout", String(e)));
-  }, []);
+export default function VandaagScreen() {
+  const [tasks, setTasks] = useState(INITIAL_TASKS);
+
+  const toggleTask = (id: number) => {
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        task.id === id ? { ...task, taken: !task.taken } : task
+      )
+    );
+  };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Medicatie vandaag</Text>
+    <SafeAreaView style={styles.container}>
+      <Text style={styles.headerTitle}>Medicatie Vandaag</Text>
 
-      <Text style={styles.text}>Server tijd: {healthTime || "..."}</Text>
+      <ScrollView contentContainerStyle={styles.list}>
+        {tasks.map((task) => (
+          <View
+            key={task.id}
+            style={[styles.card, task.taken && styles.cardTaken]}
+          >
+            <View style={styles.info}>
+              <Text style={styles.time}>{task.time}</Text>
+              <Text style={styles.name}>{task.name}</Text>
+            </View>
 
-      <Pressable style={styles.btn} onPress={() => router.push("/connect")}>
-        <Text style={styles.btnText}>Verbinding / IP instellen</Text>
-      </Pressable>
-
-      <Pressable
-        style={[styles.btn, styles.secondary]}
-        onPress={async () => {
-          try {
-            await Pi.testForward();
-            Alert.alert("OK", "Robot test gestuurd!");
-          } catch (e: any) {
-            Alert.alert("Fout", e?.message ?? "Mislukt");
-          }
-        }}
-      >
-        <Text style={styles.btnText}>Robot test (vooruit)</Text>
-      </Pressable>
-    </View>
+            <TouchableOpacity
+              onPress={() => toggleTask(task.id)}
+              style={[
+                styles.button,
+                task.taken ? styles.btnTaken : styles.btnOpen,
+              ]}
+            >
+              {task.taken ? (
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", gap: 5 }}
+                >
+                  <Ionicons name="checkmark-circle" size={24} color="white" />
+                  <Text style={styles.btnText}>GENOMEN</Text>
+                </View>
+              ) : (
+                <Text style={styles.btnText}>BEVESTIG INNAME</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ))}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  container: { flex: 1, backgroundColor: "#f2f2f7" },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: "bold",
     padding: 20,
-    justifyContent: "center",
-    gap: 12,
-    backgroundColor: "#f5f7fa",
+    color: "#1c1c1e",
   },
-  title: { fontSize: 28, fontWeight: "800" },
-  text: { fontSize: 16 },
-  btn: {
-    padding: 14,
-    borderRadius: 10,
-    backgroundColor: "#1e88e5",
-    alignItems: "center",
+  list: { padding: 20, paddingTop: 0 },
+  card: {
+    backgroundColor: "white",
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 15,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  secondary: { backgroundColor: "#2e7d32" },
-  btnText: { color: "white", fontWeight: "800" },
+  cardTaken: { backgroundColor: "#e8f5e9", opacity: 0.8 },
+  info: { marginBottom: 15 },
+  time: { fontSize: 24, fontWeight: "800", color: "#007AFF" },
+  name: { fontSize: 18, color: "#3a3a3c", marginTop: 4 },
+  button: { padding: 16, borderRadius: 12, alignItems: "center" },
+  btnOpen: { backgroundColor: "#007AFF" },
+  btnTaken: { backgroundColor: "#34C759" },
+  btnText: { color: "white", fontWeight: "bold", fontSize: 16 },
 });
