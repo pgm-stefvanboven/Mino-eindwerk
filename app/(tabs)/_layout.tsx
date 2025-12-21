@@ -46,9 +46,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="robot"
         options={{
-          title: "Robot",
+          title: "Camera",
           tabBarIcon: ({ color }) => (
-            <Ionicons name="game-controller" size={28} color={color} />
+            <Ionicons name="videocam" size={28} color={color} />
           ),
         }}
       />
