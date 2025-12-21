@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import React, { useState } from "react";
 import {
   StyleSheet,
@@ -10,23 +9,42 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+// BELANGRIJK: We importeren je Pi service
+import { Pi } from "../../services/pi";
 
-// Dit is nep-data. Later haal je dit op via Pi.getMeds()
+// Dit is nep-data. Later kun je dit vervangen door Pi.getMeds()
 const INITIAL_TASKS = [
   { id: 1, time: "08:00", name: "3x Paracetamol", taken: false },
   { id: 2, time: "12:00", name: "1x Bloeddrukpil", taken: false },
-  { id: 3, time: "20:00", name: "1x Vitamine D", taken: false },
 ];
 
 export default function VandaagScreen() {
   const [tasks, setTasks] = useState(INITIAL_TASKS);
 
   const toggleTask = (id: number) => {
+    // 1. Visuele update: Maak het vinkje direct groen (voor snelle reactie)
     setTasks((currentTasks) =>
       currentTasks.map((task) =>
         task.id === id ? { ...task, taken: !task.taken } : task
       )
     );
+
+    // 2. Hardware actie: Stuur commando naar de Robot
+    console.log("Stuur bevestiging naar Pi voor medicijn:", id);
+
+    Pi.confirmMed(id)
+      .then((response) => {
+        console.log("Robot antwoord:", response);
+        // Optioneel: Je zou hier nog een extra melding kunnen tonen
+      })
+      .catch((err) => {
+        console.log("Fout bij verbinden met robot:", err);
+        // Geef alleen een melding als het echt misgaat, om de gebruiker niet te storen
+        Alert.alert(
+          "Verbindingsfout",
+          "Kon de robot niet bereiken voor het geluidssignaal."
+        );
+      });
   };
 
   return (

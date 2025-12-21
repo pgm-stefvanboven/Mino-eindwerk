@@ -6,7 +6,7 @@ const KEY_PI_BASE = "pi_base_url";
 // Hier staat jouw vaste IP nu als standaard!
 export async function getPiBaseUrl(): Promise<string> {
   const saved = await AsyncStorage.getItem(KEY_PI_BASE);
-  return saved ?? "http://10.20.195.75:5000";
+  return saved ?? "http://10.20.195.75:5001";
 }
 
 export async function setPiBaseUrl(url: string): Promise<void> {

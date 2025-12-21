@@ -34,7 +34,7 @@ export default function ConnectScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Verbinding</Text>
-      <Text style={styles.label}>Pi URL (bv. http://10.20.195.75:5000)</Text>
+      <Text style={styles.label}>Pi URL (bv. http://10.20.195.75:5001)</Text>
 
       <TextInput
         value={url}
