@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Button,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,41 +21,55 @@ const INITIAL_TASKS = [
 export default function VandaagScreen() {
   const [tasks, setTasks] = useState(INITIAL_TASKS);
 
+  // --- DEMO FUNCTIE ---
+  const startDemoScenario = () => {
+    Alert.alert(
+      "Scenario Gestart",
+      "Mino begint nu met knipperen (Wit -> Oranje -> Rood)."
+    );
+    Pi.startReminder();
+  };
+
   const confirmMedication = (id: number) => {
-    // Zoek de taak op
     const task = tasks.find((t) => t.id === id);
+    if (task?.taken) return;
 
-    // BEVEILIGING: Als hij al genomen is, doen we niks!
-    if (task?.taken) {
-      return;
-    }
-
-    // 1. Visuele update: Zet op genomen
+    // Visuele update
     setTasks((currentTasks) =>
       currentTasks.map((t) => (t.id === id ? { ...t, taken: true } : t))
     );
 
-    // 2. Hardware actie: Stuur commando naar de Robot
     console.log("Stuur bevestiging naar Pi voor medicijn:", id);
-    Pi.confirmMed(id).catch((err) => {
-      console.log("Foutje:", err);
-      Alert.alert(
-        "Let op",
-        "Robot geluid niet gelukt, maar inname is geregistreerd."
-      );
+
+    // 1. Log in database
+    Pi.confirmMed(id).catch(console.error);
+
+    // 2. STOP HET ALARM OP DE ROBOT
+    Pi.stopReminder().catch((err) => {
+      console.log("Kon alarm niet stoppen:", err);
     });
   };
 
-  // We splitsen de lijsten hier (het filteren)
   const todoTasks = tasks.filter((task) => !task.taken);
   const doneTasks = tasks.filter((task) => task.taken);
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* --- DEMO KNOP --- */}
+      <View
+        style={{ backgroundColor: "#fff3cd", padding: 10, marginBottom: 10 }}
+      >
+        <Button
+          title="Start Scenario (Demo)"
+          color="#d97706"
+          onPress={startDemoScenario}
+        />
+      </View>
+      {/* ----------------- */}
+
       <Text style={styles.headerTitle}>Medicatie Vandaag</Text>
 
       <ScrollView contentContainerStyle={styles.list}>
-        {/* DEEL 1: NOG TE DOEN */}
         {todoTasks.length > 0 && (
           <Text style={styles.sectionHeader}>Nog in te nemen</Text>
         )}
@@ -75,7 +90,6 @@ export default function VandaagScreen() {
           </View>
         ))}
 
-        {/* Als alles op is, geven we een complimentje */}
         {todoTasks.length === 0 && (
           <View style={styles.allDoneContainer}>
             <Ionicons name="happy-outline" size={50} color="#34C759" />
@@ -85,7 +99,6 @@ export default function VandaagScreen() {
           </View>
         )}
 
-        {/* DEEL 2: REEDS GEDAAN (Onderaan, grijs gemaakt) */}
         {doneTasks.length > 0 && (
           <>
             <View style={styles.divider} />
@@ -101,8 +114,6 @@ export default function VandaagScreen() {
                     {task.name}
                   </Text>
                 </View>
-
-                {/* Geen onPress meer hier! */}
                 <View style={[styles.button, styles.btnTaken]}>
                   <View
                     style={{
@@ -147,11 +158,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     color: "#8e8e93",
   },
-  divider: {
-    height: 1,
-    backgroundColor: "#d1d1d6",
-    marginVertical: 20,
-  },
+  divider: { height: 1, backgroundColor: "#d1d1d6", marginVertical: 20 },
   card: {
     backgroundColor: "white",
     padding: 20,
@@ -163,9 +170,9 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   cardTaken: {
-    backgroundColor: "#f2f2f7", // Iets grijzer
+    backgroundColor: "#f2f2f7",
     opacity: 0.8,
-    shadowOpacity: 0, // Geen schaduw meer
+    shadowOpacity: 0,
     elevation: 0,
     borderWidth: 1,
     borderColor: "#d1d1d6",
@@ -173,18 +180,12 @@ const styles = StyleSheet.create({
   info: { marginBottom: 15 },
   time: { fontSize: 24, fontWeight: "800", color: "#007AFF" },
   name: { fontSize: 18, color: "#3a3a3c", marginTop: 4 },
-  textGray: { color: "#8e8e93" }, // Tekst grijs maken bij voltooid
-
+  textGray: { color: "#8e8e93" },
   button: { padding: 16, borderRadius: 12, alignItems: "center" },
   btnOpen: { backgroundColor: "#007AFF" },
-  btnTaken: { backgroundColor: "#34C759" }, // Groen
+  btnTaken: { backgroundColor: "#34C759" },
   btnText: { color: "white", fontWeight: "bold", fontSize: 16 },
-
-  allDoneContainer: {
-    alignItems: "center",
-    marginVertical: 20,
-    opacity: 0.8,
-  },
+  allDoneContainer: { alignItems: "center", marginVertical: 20, opacity: 0.8 },
   allDoneText: {
     fontSize: 18,
     color: "#34C759",
