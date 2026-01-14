@@ -14,9 +14,9 @@ export async function setPiBaseUrl(url: string): Promise<void> {
   await AsyncStorage.setItem(KEY_PI_BASE, cleaned);
 }
 
-// --- FUNCTIE 1: Voor Poort 5001 (Medicijnen & Video) ---
+// --- FUNCTION 1: For Port 5001 (Medicines & Video) ---
 async function api(path: string, method: string = "GET", body?: any) {
-  const base = await getPiBaseUrl(); // Dit is ...:5001
+  const base = await getPiBaseUrl(); // This is ...:5001
 
   const options: RequestInit = {
     method,
@@ -38,12 +38,12 @@ async function api(path: string, method: string = "GET", body?: any) {
   }
 }
 
-// --- FUNCTIE 2: Voor Poort 5002 (Besturing & Reminder) ---
-// Deze functie pakt de URL van hierboven, maar verandert 5001 naar 5002
+// --- FUNCTION 2: For Port 5002 (Control & Reminder) ---
+// This function takes the URL from above but changes 5001 to 5002
 async function apiCommand(path: string, method: string = "GET", body?: any) {
   let base = await getPiBaseUrl();
 
-  // TRUCJE: We vervangen poort 5001 door 5002 voor de commando's
+  // TRICK: We replace port 5001 with 5002 for commands
   base = base.replace("5001", "5002");
 
   const options: RequestInit = {
@@ -53,7 +53,7 @@ async function apiCommand(path: string, method: string = "GET", body?: any) {
   if (body) options.body = JSON.stringify(body);
 
   try {
-    // console.log(`Stuur commando naar: ${base}${path}`); // Zet aan voor debuggen
+    // console.log(`Send command to: ${base}${path}`); // only for debugging
     const res = await fetch(`${base}${path}`, options);
     const text = await res.text();
     try {
@@ -63,26 +63,25 @@ async function apiCommand(path: string, method: string = "GET", body?: any) {
     }
   } catch (err) {
     console.warn("API 5002 Error:", err);
-    // We gooien geen error hier, zodat de app niet crasht als de robot even uit staat
     return null;
   }
 }
 
-// Al je functies bij elkaar
+// All the functions together
 export const Pi = {
   health: () => api("/health"),
 
-  // --- ROBOT BESTURING (Gebruikt nu apiCommand -> Poort 5002) ---
+  // --- ROBOT CONTROL (uses apiCommand -> Port 5002) ---
   move: (dir: string) => apiCommand(`/move/${dir}`),
   stop: () => apiCommand(`/move/stop`),
 
-  // --- DEMO SCENARIO (Gebruikt apiCommand -> Poort 5002) ---
-  // Dit start de lichtjes (Wit -> Oranje -> Rood)
+  // --- DEMO SCENARIO (uses apiCommand -> Port 5002) ---
+  // This starts the lights (White -> Orange -> Red)
   startReminder: () => apiCommand("/move/reminder_start"),
-  // Dit stopt de lichtjes
+  // this stops the lights
   stopReminder: () => apiCommand("/move/reminder_stop"),
 
-  // --- MEDICIJNEN (Blijft op api -> Poort 5001) ---
+  // --- MEDICINES (Stays on api -> Port 5001) ---
   getMeds: () => api("/medicijnen"),
   confirmMed: (id: number) => api(`/medicijnen/${id}/bevestig`, "POST"),
   addMed: (naam: string) => api(`/medicijnen`, "POST", { naam }),

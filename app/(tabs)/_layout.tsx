@@ -9,46 +9,58 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: "#1e88e5",
+        tabBarActiveTintColor: "#007AFF",
+        tabBarStyle: {
+          backgroundColor: "#1c1c1e",
+          borderTopColor: "rgba(255,255,255,0.1)",
+        },
+        headerStyle: {
+          backgroundColor: "#09090b",
+          borderBottomColor: "rgba(255,255,255,0.1)",
+          borderBottomWidth: 1,
+        },
+        headerTintColor: "white",
+        headerTitleStyle: { fontWeight: "bold", letterSpacing: 1 },
+
+        // Settings button top right
         headerRight: () => (
           <Pressable
-            onPress={() => router.push("/connect")}
-            style={{ marginRight: 15 }}
+            onPress={() => router.push("/settings")}
+            style={({ pressed }) => ({
+              marginRight: 15,
+              opacity: pressed ? 0.5 : 1,
+            })}
           >
-            <Ionicons name="settings-outline" size={24} color="#333" />
+            <Ionicons name="settings-outline" size={24} color="white" />
           </Pressable>
         ),
       }}
     >
-      {/* Scherm 1: Vandaag */}
+      {/* ... other tabs ... */}
       <Tabs.Screen
         name="index"
         options={{
-          title: "Vandaag",
+          title: "VANDAAG",
           tabBarIcon: ({ color }) => (
-            <Ionicons name="today" size={28} color={color} />
+            <Ionicons name="calendar" size={24} color={color} />
           ),
         }}
       />
-
-      {/* Scherm 2: Medicijnen Lijst (zorg dat bestandsnaam medicijnen.tsx is!) */}
       <Tabs.Screen
         name="medications"
         options={{
-          title: "Medicijnen",
+          title: "MEDICIJNEN",
           tabBarIcon: ({ color }) => (
-            <Ionicons name="list" size={28} color={color} />
+            <Ionicons name="medkit" size={24} color={color} />
           ),
         }}
       />
-
-      {/* Scherm 3: Robot */}
       <Tabs.Screen
         name="robot"
         options={{
-          title: "Camera",
+          title: "CAMERA",
           tabBarIcon: ({ color }) => (
-            <Ionicons name="videocam" size={28} color={color} />
+            <Ionicons name="videocam" size={24} color={color} />
           ),
         }}
       />
