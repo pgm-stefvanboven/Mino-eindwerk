@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import React, { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
@@ -31,6 +32,8 @@ type Task = {
 };
 
 const DEMO_MISS_LIMIT_SECONDS = 5;
+// Zorg dat dit IP klopt met je server
+const ROBOT_API_URL = "http://10.217.173.75:5001";
 
 export default function VandaagScreen() {
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -161,6 +164,7 @@ export default function VandaagScreen() {
     setSelectedDate(newDate);
   };
 
+  // --- DE BELANGRIJKSTE UPDATE: INNAME BEVESTIGEN + TIMER STARTEN ---
   const confirmMedication = async (id: number) => {
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
@@ -183,6 +187,22 @@ export default function VandaagScreen() {
     const updatedMeds = await getMedications();
     setLowStockMeds(updatedMeds.filter((m) => m.stock < 10));
 
+    // --- NIEUWE LOGICA VOOR HET "TOILET SCENARIO" ---
+    // Zoek het medicijn dat we net hebben ingenomen
+    const currentMed = updatedMeds.find((m) => m.id === task.medId);
+
+    // Als de voorraad NU laag is (<10) EN het is nog niet besteld...
+    // Dan starten we de timer op de robot.
+    if (currentMed && currentMed.stock < 10 && !currentMed.isOrdered) {
+      console.log("Mino activeren voor 'Nawerk' herinnering...");
+      try {
+        await fetch(`${ROBOT_API_URL}/start_restock_timer`, { method: "POST" });
+      } catch (e) {
+        console.log("Kon robot niet bereiken voor timer");
+      }
+    }
+
+    // 5. Bevestig geluid op robot (Piepje dat inname OK is)
     Pi.confirmMed(id).catch(console.error);
     Pi.stopReminder().catch(() => {});
   };
@@ -247,27 +267,84 @@ export default function VandaagScreen() {
         />
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
-          {/*  STOCK ALERT (Only visible if there are <10) */}
-          {lowStockMeds.length > 0 && (
-            <View style={styles.alertSection}>
-              <View style={styles.alertHeader}>
-                <Ionicons name="warning" size={18} color="#ffaa00" />
-                <Text style={styles.alertTitle}>Bijna op! Bijbestellen:</Text>
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginTop: 10 }}
-              >
-                {lowStockMeds.map((med) => (
-                  <View key={med.id} style={styles.stockChip}>
-                    <Text style={styles.stockChipName}>{med.name}</Text>
-                    <Text style={styles.stockChipCount}>Nog {med.stock}</Text>
+          {/*  STOCK ALERT (Slimme Versie) */}
+          {lowStockMeds.length > 0 &&
+            (() => {
+              // Checken: zijn er nog medicijnen die NIET gemeld zijn?
+              const unhandledCount = lowStockMeds.filter(
+                (m) => !m.isOrdered
+              ).length;
+              const isAllHandled = unhandledCount === 0;
+
+              // Kleuren bepalen: Oranje als er actie nodig is, anders Blauw
+              const themeColor = isAllHandled ? "#60a5fa" : "#ffaa00";
+              const bgStyle = isAllHandled
+                ? styles.alertSectionHandled
+                : styles.alertSection;
+
+              return (
+                <View style={bgStyle}>
+                  <View style={styles.alertHeader}>
+                    <Ionicons
+                      name={isAllHandled ? "checkmark-circle" : "warning"}
+                      size={18}
+                      color={themeColor}
+                    />
+                    <Text style={[styles.alertTitle, { color: themeColor }]}>
+                      {isAllHandled
+                        ? "Alles is gemeld aan familie"
+                        : "Bijna op! Bijbestellen:"}
+                    </Text>
                   </View>
-                ))}
-              </ScrollView>
-            </View>
-          )}
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{ marginTop: 10 }}
+                  >
+                    {lowStockMeds.map((med) => {
+                      const isReported = med.isOrdered === true;
+
+                      return (
+                        <View
+                          key={med.id}
+                          style={
+                            isReported
+                              ? styles.stockChipReported
+                              : styles.stockChip
+                          }
+                        >
+                          <Text style={styles.stockChipName}>{med.name}</Text>
+
+                          {isReported ? (
+                            <View
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <Text style={styles.stockChipCountReported}>
+                                GEMELD
+                              </Text>
+                              <Ionicons
+                                name="checkmark"
+                                size={10}
+                                color="#60a5fa"
+                              />
+                            </View>
+                          ) : (
+                            <Text style={styles.stockChipCount}>
+                              Nog {med.stock}
+                            </Text>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              );
+            })()}
 
           {/* TIMELINE */}
           <View style={styles.timelineContainer}>
@@ -459,6 +536,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textTransform: "uppercase",
   },
+  alertSectionHandled: {
+    backgroundColor: "rgba(96, 165, 250, 0.1)", // Blauw/Grijs gloed
+    borderColor: "rgba(96, 165, 250, 0.3)",
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 20,
+  },
   stockChip: {
     backgroundColor: "#222",
     paddingHorizontal: 12,
@@ -469,6 +554,24 @@ const styles = StyleSheet.create({
     borderColor: "#333",
     flexDirection: "row",
     gap: 6,
+  },
+  stockChipReported: {
+    backgroundColor: "rgba(96, 165, 250, 0.1)", // Heel licht blauw
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: "rgba(96, 165, 250, 0.3)", // Blauw randje
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+
+  stockChipCountReported: {
+    color: "#60a5fa",
+    fontWeight: "bold",
+    fontSize: 10,
   },
   stockChipName: { color: "white", fontSize: 12 },
   stockChipCount: { color: "#ffaa00", fontWeight: "bold", fontSize: 12 },

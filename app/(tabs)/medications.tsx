@@ -25,7 +25,7 @@ import {
   saveMedications,
 } from "../../data/medications";
 
-// --- THE CORRECT DEMO CODES ---
+// --- DATABASE VOOR BARCODES ---
 const BARCODE_DB: Record<
   string,
   { name: string; dosage: string; stock: number }
@@ -41,22 +41,26 @@ export default function MedicijnLijstScreen() {
   const [meds, setMeds] = useState<Medication[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
 
+  // Modals state
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
   const [successData, setSuccessData] = useState({ title: "", msg: "" });
 
+  // Data state
   const [selectedMed, setSelectedMed] = useState<Medication | null>(null);
+
+  // New Medication Form state
   const [newName, setNewName] = useState("");
   const [newDosage, setNewDosage] = useState("");
   const [newStock, setNewStock] = useState("");
 
-  const [isRefilling, setIsRefilling] = useState(false);
-  const [isLocked, setIsLocked] = useState(false);
+  const [isRefilling, setIsRefilling] = useState(false); // True = bestaand bijvullen, False = nieuw toevoegen
+  const [isLocked, setIsLocked] = useState(false); // Als true, zijn velden ingevuld door scanner
   const [isSending, setIsSending] = useState(false);
 
-  // NEW: State for caregiver information
+  // Caregiver info
   const [caregiverName, setCaregiverName] = useState("Familie");
   const [caregiverRelation, setCaregiverRelation] = useState("");
 
@@ -65,7 +69,6 @@ export default function MedicijnLijstScreen() {
     useCallback(() => {
       getMedications().then(setMeds);
 
-      // LOAD CAREGIVER INFO FROM SETTINGS
       const loadContact = async () => {
         const name = await AsyncStorage.getItem("CONTACT_NAME");
         const relation = await AsyncStorage.getItem("CONTACT_RELATION");
@@ -92,6 +95,7 @@ export default function MedicijnLijstScreen() {
 
     if (foundProduct) {
       if (isRefilling && selectedMed) {
+        // SCENARIO 1: BIJVULLEN BESTAAND
         if (foundProduct.name !== selectedMed.name) {
           setTimeout(() => {
             Alert.alert(
@@ -101,16 +105,35 @@ export default function MedicijnLijstScreen() {
           }, 500);
           return;
         }
-        updateStock(foundProduct.stock);
-        showCustomSuccess(
-          "Voorraad Bijgevuld",
-          `Er zijn ${foundProduct.stock} stuks ${foundProduct.name} toegevoegd.`
-        );
+
+        // Update stock direct
+        const updateStockLogic = async (amount: number) => {
+          const updatedList = meds.map((m) => {
+            if (m.id === selectedMed.id) {
+              const updatedStock = Math.max(0, m.stock + amount);
+              // Update ook lokale state voor de modal
+              setSelectedMed({ ...m, stock: updatedStock, isOrdered: false });
+              return { ...m, stock: updatedStock, isOrdered: false };
+            }
+            return m;
+          });
+          setMeds(updatedList);
+          await saveMedications(updatedList);
+          showCustomSuccess("Gelukt!", `Voorraad bijgewerkt.`);
+        };
+
+        // Voeg standaard doos grootte toe
+        updateStockLogic(foundProduct.stock);
       } else {
+        // SCENARIO 2: NIEUW TOEVOEGEN
         setNewName(foundProduct.name);
         setNewDosage(foundProduct.dosage);
         setNewStock(foundProduct.stock.toString());
-        setIsLocked(true);
+        setIsLocked(true); // Velden op slot want het is een geverifieerd product
+
+        // Zorg dat het toevoeg scherm open staat
+        setAddModalVisible(true);
+
         showCustomSuccess(
           "Product Herkend",
           `EAN: ${data}\n${foundProduct.name} (${foundProduct.dosage})`
@@ -126,23 +149,36 @@ export default function MedicijnLijstScreen() {
     }
   };
 
+  // --- SAVING NEW MEDICINE ---
+  const handleSaveNew = async () => {
+    if (!newName || !newStock) {
+      Alert.alert("Invullen aub", "Naam en voorraad zijn verplicht.");
+      return;
+    }
+
+    const newMedItem: Medication = {
+      id: Date.now().toString(),
+      name: newName,
+      dosage: newDosage || "N.v.t.",
+      stock: parseInt(newStock) || 0,
+      isOrdered: false,
+    };
+
+    const updatedList = [...meds, newMedItem];
+    setMeds(updatedList);
+    await saveMedications(updatedList);
+
+    setAddModalVisible(false);
+    setNewName("");
+    setNewDosage("");
+    setNewStock("");
+    setIsLocked(false);
+  };
+
+  // --- NOTIFICATIONS & UPDATES ---
   const showCustomSuccess = (title: string, msg: string) => {
     setSuccessData({ title, msg });
     setTimeout(() => setSuccessVisible(true), 500);
-  };
-
-  const updateStock = async (amount: number) => {
-    if (!selectedMed) return;
-    const updatedList = meds.map((m) => {
-      if (m.id === selectedMed.id) {
-        const updatedStock = Math.max(0, m.stock + amount);
-        setSelectedMed({ ...m, stock: updatedStock });
-        return { ...m, stock: updatedStock };
-      }
-      return m;
-    });
-    setMeds(updatedList);
-    await saveMedications(updatedList);
   };
 
   const deleteMed = (id: string) => {
@@ -165,12 +201,26 @@ export default function MedicijnLijstScreen() {
       console.log("Robot offline (demo mode)");
     }
 
+    if (selectedMed) {
+      const updatedList = meds.map((m) => {
+        if (m.id === selectedMed.id) {
+          return { ...m, isOrdered: true };
+        }
+        return m;
+      });
+      setMeds(updatedList);
+      saveMedications(updatedList);
+      // Update local selection to show checkmark immediately
+      setSelectedMed({ ...selectedMed, isOrdered: true });
+    }
+
     setTimeout(() => {
       setIsSending(false);
       setEditModalVisible(false);
+      setEditModalVisible(false);
       showCustomSuccess(
-        "Bericht Verzonden",
-        `Verzoek voor ${medName} is succesvol verstuurd naar ${caregiverName} (${caregiverRelation}).`
+        "Gemeld aan familie",
+        `Verzoek voor ${medName} is succesvol verstuurd.`
       );
     }, 1500);
   };
@@ -191,49 +241,199 @@ export default function MedicijnLijstScreen() {
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => {
           const isLow = item.stock < 10;
+          const isReported = item.isOrdered === true;
+
+          let statusColor = "#00f0ff";
+          let statusIcon: keyof typeof Ionicons.glyphMap = "medkit";
+          let statusText = `Nog ${item.stock} stuks`;
+          let textColor = "#666";
+
+          if (isReported) {
+            statusColor = "#60a5fa";
+            statusIcon = "mail-unread";
+            statusText = "Gemeld aan familie";
+            textColor = "#60a5fa";
+          } else if (isLow) {
+            statusColor = "#ffaa00";
+            statusIcon = "alert";
+            statusText = `Nog ${item.stock} stuks - Bijvullen!`;
+            textColor = "#ffaa00";
+          }
+
           return (
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={() => openEditModal(item)}
-              style={[styles.card, isLow && styles.cardLowStock]}
+              style={[
+                styles.card,
+                isLow && !isReported && styles.cardLowStock,
+                isReported && styles.cardReported,
+              ]}
             >
-              <View style={[styles.iconContainer, isLow && styles.iconLow]}>
-                <Ionicons
-                  name={isLow ? "alert" : "medkit"}
-                  size={24}
-                  color={isLow ? "#ffaa00" : "#00f0ff"}
-                />
+              <View
+                style={[
+                  styles.iconContainer,
+                  {
+                    backgroundColor: `${statusColor}20`,
+                    borderColor: `${statusColor}40`,
+                  },
+                ]}
+              >
+                <Ionicons name={statusIcon} size={24} color={statusColor} />
               </View>
+
               <View style={styles.textContainer}>
                 <Text style={styles.medName}>{item.name}</Text>
                 <View style={styles.detailRow}>
                   <Text
                     style={[
                       styles.stockText,
-                      isLow && { color: "#ffaa00", fontWeight: "bold" },
+                      {
+                        color: textColor,
+                        fontWeight: isLow || isReported ? "bold" : "normal",
+                      },
                     ]}
                   >
-                    Nog {item.stock} stuks
+                    {statusText}
                   </Text>
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>{item.dosage}</Text>
                   </View>
                 </View>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#666" />
+
+              <Ionicons
+                name={isReported ? "checkmark" : "chevron-forward"}
+                size={20}
+                color={isReported ? "#60a5fa" : "#666"}
+              />
             </TouchableOpacity>
           );
         }}
       />
 
+      {/* --- FAB (Floating Action Button) MET HET JUISTE SCAN ICOON --- */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => setAddModalVisible(true)}
+        onPress={() => {
+          // Reset fields for new entry
+          setNewName("");
+          setNewDosage("");
+          setNewStock("");
+          setIsLocked(false);
+          setAddModalVisible(true);
+        }}
       >
-        <Ionicons name="barcode-outline" size={32} color="white" />
+        <Ionicons name="barcode-outline" size={30} color="white" />
       </TouchableOpacity>
 
-      {/* SUCCESS MODAL */}
+      {/* --- MODAL 1: ADD NEW MEDICINE (LOCKED & STYLED) --- */}
+      <Modal
+        animationType="slide"
+        visible={addModalVisible}
+        onRequestClose={() => setAddModalVisible(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#09090b" }}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={{ flex: 1 }}
+          >
+            <View style={styles.modalContentFullScreen}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Nieuw Medicijn</Text>
+                <TouchableOpacity onPress={() => setAddModalVisible(false)}>
+                  <Ionicons name="close" size={28} color="#888" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Scan Button inside Add Modal */}
+              <TouchableOpacity
+                style={styles.scanSection}
+                onPress={() => startCamera(false)}
+              >
+                <View style={styles.scanButton}>
+                  <Ionicons name="barcode-outline" size={22} color="white" />
+                  <Text style={styles.scanButtonText}>SCAN BARCODE</Text>
+                </View>
+                <Text style={styles.scanHint}>
+                  of vul de gegevens hieronder handmatig in
+                </Text>
+              </TouchableOpacity>
+
+              {isLocked && (
+                <View style={styles.lockedBanner}>
+                  <Ionicons name="checkmark-circle" size={20} color="#4ade80" />
+                  <Text style={styles.lockedText}>
+                    Product herkend & geverifieerd
+                  </Text>
+                </View>
+              )}
+
+              {/* NAAM MEDICIJN (LOCKED NA SCAN) */}
+              <Text style={styles.label}>NAAM MEDICIJN</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={[styles.input, isLocked && styles.inputLocked]}
+                  placeholder="bv. Paracetamol"
+                  placeholderTextColor="#666"
+                  value={newName}
+                  onChangeText={setNewName}
+                  editable={!isLocked} // KAN NIET AANPASSEN NA SCAN
+                />
+                {isLocked && (
+                  <Ionicons
+                    name="lock-closed"
+                    size={18}
+                    color="#666"
+                    style={styles.lockIcon}
+                  />
+                )}
+              </View>
+
+              {/* DOSERING (LOCKED NA SCAN) */}
+              <Text style={styles.label}>DOSERING</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={[styles.input, isLocked && styles.inputLocked]}
+                  placeholder="bv. 500mg"
+                  placeholderTextColor="#666"
+                  value={newDosage}
+                  onChangeText={setNewDosage}
+                  editable={!isLocked} // KAN NIET AANPASSEN NA SCAN
+                />
+                {isLocked && (
+                  <Ionicons
+                    name="lock-closed"
+                    size={18}
+                    color="#666"
+                    style={styles.lockIcon}
+                  />
+                )}
+              </View>
+
+              {/* VOORRAAD (ALTIJD AANPASBAAR) */}
+              <Text style={styles.label}>AANTAL STUKS / VOORRAAD</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input} // GEEN LOCKED STYLE HIER
+                  placeholder="0"
+                  placeholderTextColor="#666"
+                  value={newStock}
+                  onChangeText={setNewStock}
+                  keyboardType="numeric"
+                />
+                {/* Geen slot icoon hier, want je mag dit altijd aanpassen */}
+              </View>
+
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveNew}>
+                <Text style={styles.saveBtnText}>TOEVOEGEN AAN VOORRAAD</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- MODAL 2: SUCCESS MESSAGE --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -257,38 +457,47 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* CAMERA MODAL */}
+      {/* --- MODAL 3: CAMERA (GECORRIGEERD) --- */}
       <Modal
         animationType="slide"
         visible={cameraVisible}
         onRequestClose={() => setCameraVisible(false)}
       >
-        <CameraView
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          onBarcodeScanned={handleBarcodeScanned}
-          barcodeScannerSettings={{ barcodeTypes: ["ean13", "qr"] }}
-        >
-          <SafeAreaView style={styles.cameraOverlay}>
+        <View style={{ flex: 1, backgroundColor: "black" }}>
+          {/* 1. De Camera staat nu 'los', zonder children */}
+          <CameraView
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            onBarcodeScanned={handleBarcodeScanned}
+            barcodeScannerSettings={{ barcodeTypes: ["ean13", "qr"] }}
+          />
+
+          {/* 2. De Overlay staat er nu 'overheen' via absolute positionering */}
+          <SafeAreaView
+            style={[styles.cameraOverlay, StyleSheet.absoluteFill]}
+            pointerEvents="box-none"
+          >
             <TouchableOpacity
               onPress={() => setCameraVisible(false)}
               style={styles.closeCameraBtn}
             >
               <Ionicons name="close" size={30} color="white" />
             </TouchableOpacity>
+
             <View style={styles.scanFrame}>
               <View style={styles.scanLine} />
             </View>
+
             <Text style={styles.cameraText}>
               {isRefilling
                 ? `Scan doosje ${selectedMed?.name}`
                 : "Scan nieuw medicijn"}
             </Text>
           </SafeAreaView>
-        </CameraView>
+        </View>
       </Modal>
 
-      {/* REFILL MODAL */}
+      {/* --- MODAL 4: EDIT / REFILL --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -316,7 +525,10 @@ export default function MedicijnLijstScreen() {
 
             <TouchableOpacity
               style={styles.bigScanBtn}
-              onPress={() => startCamera(true)}
+              onPress={() => {
+                setEditModalVisible(false); // Sluit eerst dit scherm
+                setTimeout(() => startCamera(true), 500); // Start dan camera
+              }}
             >
               <Ionicons name="scan-circle" size={40} color="white" />
               <View>
@@ -327,25 +539,35 @@ export default function MedicijnLijstScreen() {
 
             {selectedMed && selectedMed.stock < 10 && (
               <TouchableOpacity
-                style={[styles.notifyBtn, isSending && { opacity: 0.7 }]}
+                disabled={isSending || selectedMed.isOrdered}
+                style={[
+                  styles.notifyBtn,
+                  isSending && { opacity: 0.7 },
+                  selectedMed.isOrdered && styles.notifyBtnOrdered,
+                ]}
                 onPress={() => notifyCaregiver(selectedMed.name)}
-                disabled={isSending}
               >
                 {isSending ? (
                   <ActivityIndicator color="white" />
                 ) : (
                   <>
                     <Ionicons
-                      name="paper-plane-outline"
+                      name={
+                        selectedMed.isOrdered
+                          ? "checkmark-circle"
+                          : "paper-plane-outline"
+                      }
                       size={20}
                       color="white"
                     />
-                    {/* DYNAMIC BUTTON TEXT */}
                     <Text style={styles.notifyBtnText}>
-                      VRAAG AAN {caregiverName.toUpperCase()}{" "}
-                      {caregiverRelation
-                        ? `(${caregiverRelation.toUpperCase()})`
-                        : ""}
+                      {selectedMed.isOrdered
+                        ? "REEDS GEMELD AAN FAMILIE"
+                        : `VRAAG AAN ${caregiverName.toUpperCase()} ${
+                            caregiverRelation
+                              ? `(${caregiverRelation.toUpperCase()})`
+                              : ""
+                          }`}
                     </Text>
                   </>
                 )}
@@ -390,6 +612,8 @@ const styles = StyleSheet.create({
   },
   subTitle: { color: "#888", fontSize: 13, marginTop: 4 },
   listContent: { padding: 20, paddingBottom: 100 },
+
+  // --- CARDS ---
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -404,6 +628,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 170, 0, 0.3)",
     backgroundColor: "rgba(255, 170, 0, 0.05)",
   },
+  cardReported: {
+    borderColor: "rgba(96, 165, 250, 0.3)",
+    backgroundColor: "rgba(96, 165, 250, 0.05)",
+  },
   iconContainer: {
     width: 48,
     height: 48,
@@ -414,10 +642,6 @@ const styles = StyleSheet.create({
     marginRight: 16,
     borderWidth: 1,
     borderColor: "rgba(0, 240, 255, 0.2)",
-  },
-  iconLow: {
-    backgroundColor: "rgba(255, 170, 0, 0.1)",
-    borderColor: "rgba(255, 170, 0, 0.2)",
   },
   textContainer: { flex: 1 },
   medName: { color: "white", fontSize: 17, fontWeight: "600", marginBottom: 6 },
@@ -432,6 +656,8 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#ccc", fontSize: 12, fontWeight: "500" },
   stockText: { color: "#666", fontSize: 12 },
+
+  // --- FAB (ADD BUTTON) ---
   fab: {
     position: "absolute",
     right: 20,
@@ -448,6 +674,8 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+
+  // --- MODALS ALGEMENE STYLING ---
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.85)",
@@ -462,13 +690,21 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.1)",
     width: "90%",
   },
+  modalContentFullScreen: {
+    flex: 1,
+    padding: 20,
+    paddingTop: 50, // Iets meer ruimte voor de notch
+    backgroundColor: "#09090b",
+  },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 25,
   },
-  modalTitle: { color: "white", fontSize: 20, fontWeight: "bold" },
+  modalTitle: { color: "white", fontSize: 22, fontWeight: "bold" },
+
+  // --- SUCCESS POPUP ---
   successContent: {
     backgroundColor: "#1c1c1e",
     width: "80%",
@@ -477,67 +713,137 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#4ade80",
-    shadowColor: "#4ade80",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
   },
   successIcon: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: "#4ade80",
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "rgba(74, 222, 128, 0.2)",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 20,
-    shadowColor: "#4ade80",
-    shadowOpacity: 0.6,
-    shadowRadius: 10,
   },
   successTitle: {
     color: "white",
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "bold",
     marginBottom: 10,
     textAlign: "center",
   },
   successText: {
-    color: "#ccc",
-    fontSize: 15,
+    color: "#aaa",
+    fontSize: 14,
     textAlign: "center",
-    marginBottom: 24,
-    lineHeight: 22,
+    marginBottom: 20,
   },
   successBtn: {
     backgroundColor: "#4ade80",
-    paddingVertical: 14,
+    paddingVertical: 12,
     width: "100%",
     borderRadius: 12,
     alignItems: "center",
   },
   successBtnText: { color: "#052e16", fontWeight: "bold", fontSize: 16 },
+
+  // --- SCAN SECTION ---
   scanSection: {
-    backgroundColor: "rgba(0, 240, 255, 0.05)",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
+    backgroundColor: "#131313",
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 25,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(0, 240, 255, 0.2)",
+    borderColor: "#333",
     borderStyle: "dashed",
   },
   scanButton: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
     alignItems: "center",
-    backgroundColor: "#00f0ff",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 8,
+    backgroundColor: "#2563eb", // Iets dieper blauw
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 10,
+    marginBottom: 10,
   },
-  scanButtonText: { fontWeight: "bold", color: "black" },
-  scanHint: { color: "#666", fontSize: 11, textAlign: "center" },
+  scanButtonText: { fontWeight: "700", color: "white", fontSize: 15 },
+  scanHint: { color: "#666", fontSize: 12, textAlign: "center" },
+
+  // --- INPUT FIELDS & LOCKING ---
+  label: {
+    color: "#888",
+    fontSize: 11,
+    fontWeight: "700",
+    marginBottom: 8,
+    marginTop: 15,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginLeft: 4,
+  },
+  inputWrapper: {
+    position: "relative", // Nodig om het slotje te positioneren
+    justifyContent: "center",
+  },
+  input: {
+    backgroundColor: "#1c1c1e",
+    color: "white",
+    padding: 16,
+    paddingRight: 40, // Ruimte maken voor het slot icoon
+    borderRadius: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  // Nieuwe stijl voor gesloten velden (ziet eruit als 'read-only')
+  inputLocked: {
+    backgroundColor: "#111", // Donkerder
+    borderColor: "transparent", // Geen rand
+    color: "#666", // Tekst donkerder
+  },
+  lockIcon: {
+    position: "absolute",
+    right: 15,
+    opacity: 0.5,
+  },
+
+  // --- VERIFIED BANNER ---
+  lockedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(74, 222, 128, 0.15)", // Subtiel groen
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(74, 222, 128, 0.3)",
+  },
+  lockedText: {
+    color: "#4ade80",
+    fontSize: 13,
+    fontWeight: "600",
+    marginLeft: 10,
+  },
+
+  // --- BUTTONS ---
+  saveBtn: {
+    backgroundColor: "#007AFF",
+    padding: 18,
+    borderRadius: 14,
+    alignItems: "center",
+    marginTop: 40,
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  saveBtnText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 15,
+    letterSpacing: 0.5,
+  },
+
+  // --- OVERIGE STYLES (CAMERA ETC) ---
   bigScanBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -547,66 +853,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     width: "100%",
     justifyContent: "center",
-    shadowColor: "#007AFF",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
   },
   bigScanTitle: { color: "white", fontWeight: "bold", fontSize: 18 },
   bigScanSub: { color: "rgba(255,255,255,0.7)", fontSize: 13 },
-  divider: {
-    height: 1,
-    backgroundColor: "#333",
-    marginVertical: 10,
-    width: "100%",
-  },
-  inputLocked: {
-    backgroundColor: "#1a1a1a",
-    borderColor: "#4ade80",
-    color: "#888",
-  },
-  lockedBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(74, 222, 128, 0.1)",
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  lockedText: { color: "#4ade80", fontSize: 12, fontWeight: "bold" },
-  label: {
-    color: "#888",
-    fontSize: 12,
-    fontWeight: "bold",
-    marginBottom: 8,
-    marginTop: 10,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  input: {
-    backgroundColor: "#2c2c2e",
-    color: "white",
-    padding: 16,
-    borderRadius: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-  },
-  saveBtn: {
-    backgroundColor: "#007AFF",
-    padding: 18,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 30,
-    marginBottom: 10,
-  },
-  saveBtnText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 14,
-    letterSpacing: 1,
-  },
   notifyBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -618,11 +867,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 20,
   },
-  notifyBtnText: { color: "white", fontWeight: "bold", fontSize: 11 }, // Iets kleiner font voor lange namen
+  notifyBtnOrdered: {
+    backgroundColor: "#10b981",
+    borderColor: "#059669",
+    borderWidth: 1,
+    opacity: 1,
+  },
+  notifyBtnText: { color: "white", fontWeight: "bold", fontSize: 11 },
   closeBtn: {
     width: "100%",
     padding: 16,
-    backgroundColor: "#333",
+    backgroundColor: "#2c2c2e",
     borderRadius: 12,
     alignItems: "center",
     marginTop: 10,

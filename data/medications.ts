@@ -6,6 +6,7 @@ export type Medication = {
   name: string;
   dosage: string;
   stock: number;
+  isOrdered?: boolean;
 };
 
 const STORAGE_KEY = "MEDICATION_DB_STOCK";
