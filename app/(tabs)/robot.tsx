@@ -107,6 +107,53 @@ const ControlPad = ({ moveFn }: { moveFn: (d: string) => void }) => {
   );
 };
 
+// --- NIEUW: CAMERA BEDIENING (MET LINKS/RECHTS) ---
+const CameraPad = ({ moveFn }: { moveFn: (d: string) => void }) => {
+  return (
+    <View style={styles.camPadContainer}>
+      <Text style={styles.camLabel}>CAM</Text>
+
+      {/* Boven */}
+      <View style={styles.camRow}>
+        <TechBtn
+          icon="chevron-up"
+          size={45}
+          onPressIn={() => moveFn("cam_up")}
+          onPressOut={() => moveFn("cam_stop")}
+        />
+      </View>
+
+      {/* Midden (Links - Rechts) */}
+      <View style={[styles.camRow, { gap: 10, marginVertical: 5 }]}>
+        <TechBtn
+          icon="chevron-back"
+          size={45}
+          onPressIn={() => moveFn("cam_left")}
+          onPressOut={() => moveFn("cam_stop")}
+        />
+        {/* Ruimte in het midden */}
+        <View style={{ width: 10 }} />
+        <TechBtn
+          icon="chevron-forward"
+          size={45}
+          onPressIn={() => moveFn("cam_right")}
+          onPressOut={() => moveFn("cam_stop")}
+        />
+      </View>
+
+      {/* Onder */}
+      <View style={styles.camRow}>
+        <TechBtn
+          icon="chevron-down"
+          size={45}
+          onPressIn={() => moveFn("cam_down")}
+          onPressOut={() => moveFn("cam_stop")}
+        />
+      </View>
+    </View>
+  );
+};
+
 export default function RobotScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -117,6 +164,7 @@ export default function RobotScreen() {
   const [isFullscreen, setIsFullscreen] = React.useState(false);
 
   const move = (dir: string) => {
+    // Stuurt commando naar Python server
     fetch(`${COMMAND_IP}/move/${dir}`).catch(() => setStatus("OFFLINE"));
   };
 
@@ -149,7 +197,7 @@ export default function RobotScreen() {
           tabBarStyle: undefined,
         });
       };
-    }, [navigation])
+    }, [navigation]),
   );
 
   const toggleFullscreen = async () => {
@@ -165,7 +213,7 @@ export default function RobotScreen() {
       }
 
       await ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT
+        ScreenOrientation.OrientationLock.PORTRAIT,
       );
 
       setIsFullscreen(false);
@@ -177,16 +225,15 @@ export default function RobotScreen() {
       });
 
       await ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.LANDSCAPE
+        ScreenOrientation.OrientationLock.LANDSCAPE,
       );
 
       if (Platform.OS === "android") {
         await NavigationBar.setVisibilityAsync("hidden");
-        // FIX VOOR ERROR: We proberen de behavior te zetten, maar negeren de fout als het niet ondersteund is
         try {
           await NavigationBar.setBehaviorAsync("overlay-swipe");
         } catch (e) {
-          // Edge-to-edge devices ondersteunen dit soms niet, dat is oké.
+          // Edge-to-edge devices support fix
         }
       }
 
@@ -195,7 +242,6 @@ export default function RobotScreen() {
     setTimeout(reloadVideo, 100);
   };
 
-  // CSS FIX: Brightness filter toegevoegd om het beeld lichter te maken
   const html = `
     <html>
       <head>
@@ -229,8 +275,8 @@ export default function RobotScreen() {
               status === "ONLINE"
                 ? "#3cdc78"
                 : status === "CONNECTING"
-                ? "#fbbf24"
-                : "#ef4444",
+                  ? "#fbbf24"
+                  : "#ef4444",
           },
         ]}
       />
@@ -245,7 +291,6 @@ export default function RobotScreen() {
       {/* --- PORTRAIT MODE --- */}
       {!isFullscreen && (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-
           <View style={styles.monitorFrame}>
             <View style={styles.screenInner}>
               <WebView
@@ -278,7 +323,13 @@ export default function RobotScreen() {
           </View>
 
           <View style={styles.controlsSection}>
-            <ControlPad moveFn={move} />
+            {/* Hier voegen we de CameraPad toe naast de ControlPad */}
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 20 }}
+            >
+              <ControlPad moveFn={move} />
+              <CameraPad moveFn={move} />
+            </View>
           </View>
         </View>
       )}
@@ -316,6 +367,11 @@ export default function RobotScreen() {
 
             <View style={styles.fsRight}>
               <View style={styles.actionColumn}>
+                {/* Camera controls in fullscreen */}
+                <CameraPad moveFn={move} />
+
+                <View style={{ height: 10 }} />
+
                 <TechBtn icon="refresh" size={50} onPress={reloadVideo} />
                 <TechBtn
                   icon="close"
@@ -389,6 +445,31 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   emptyCell: { width: 60, height: 60 },
+
+  // --- STYLES VOOR DE NIEUWE CAMERA PAD ---
+  camPadContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    padding: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  camRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  camLabel: {
+    color: THEME.primary,
+    fontFamily: THEME.font,
+    fontSize: 10,
+    fontWeight: "bold",
+    marginBottom: 5,
+    letterSpacing: 1,
+  },
+  // ----------------------------------------
 
   techBtnBase: {
     backgroundColor: THEME.glass,
@@ -465,5 +546,5 @@ const styles = StyleSheet.create({
   fsLeft: { flex: 1, justifyContent: "flex-end", paddingBottom: 10 },
   fsCenter: { marginTop: 10 },
   fsRight: { flex: 1, justifyContent: "center", alignItems: "flex-end" },
-  actionColumn: { gap: 20, marginRight: 10 },
+  actionColumn: { gap: 20, marginRight: 10, alignItems: "center" },
 });
