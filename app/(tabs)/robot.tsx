@@ -5,9 +5,9 @@ import {
   Text,
   StyleSheet,
   Pressable,
-  ActivityIndicator,
   Platform,
   StatusBar,
+  Dimensions,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,11 +20,12 @@ import * as NavigationBar from "expo-navigation-bar";
 const VIDEO_IP = "http://10.81.173.75:5001";
 const COMMAND_IP = "http://10.81.173.75:5002";
 
-// --- THEMA INSTELLINGEN ---
+// --- THEMA ---
 const THEME = {
   primary: "#00f0ff",
   danger: "#ff2a2a",
-  glass: "rgba(10, 15, 20, 0.65)",
+  glass: "rgba(20, 30, 40, 0.7)",
+  glassActive: "rgba(0, 240, 255, 0.3)",
   border: "rgba(255, 255, 255, 0.15)",
   font: Platform.OS === "ios" ? "Menlo" : "monospace",
 };
@@ -48,7 +49,7 @@ const TechBtn = ({
       styles.techBtnBase,
       { width: size, height: size, borderRadius: size / 2 },
       danger && styles.techBtnDanger,
-      pressed && { transform: [{ scale: 0.95 }], opacity: 0.8 },
+      pressed && styles.techBtnPressed,
       style,
     ]}
   >
@@ -56,99 +57,124 @@ const TechBtn = ({
   </Pressable>
 );
 
-const ControlPad = ({ moveFn }: { moveFn: (d: string) => void }) => {
+const StatusBadge = ({ status }: { status: string }) => (
+  <View
+    style={[
+      styles.badge,
+      {
+        backgroundColor:
+          status === "ONLINE"
+            ? "rgba(60, 220, 120, 0.2)"
+            : "rgba(255, 60, 60, 0.2)",
+        borderColor: status === "ONLINE" ? "#3cdc78" : "#ff4444",
+      },
+    ]}
+  >
+    <View
+      style={[
+        styles.dot,
+        { backgroundColor: status === "ONLINE" ? "#3cdc78" : "#ff4444" },
+      ]}
+    />
+    <Text style={styles.badgeText}>{status}</Text>
+  </View>
+);
+
+// Aangepaste DPad die 'size' accepteert voor schaling
+const DPad = ({
+  moveFn,
+  type,
+  label,
+  size = 50, // Standaard grootte
+}: {
+  moveFn: (d: string) => void;
+  type: "move" | "cam";
+  label?: string;
+  size?: number;
+}) => {
+  const isMove = type === "move";
+  // Dynamische cell grootte gebaseerd op knopgrootte
+  const cellSize = size + 10;
+
+  const icons = isMove
+    ? {
+        up: "caret-up",
+        down: "caret-down",
+        left: "caret-back",
+        right: "caret-forward",
+      }
+    : {
+        up: "chevron-up",
+        down: "chevron-down",
+        left: "chevron-back",
+        right: "chevron-forward",
+      };
+
+  const cmds = isMove
+    ? {
+        up: "vooruit",
+        down: "achteruit",
+        left: "links",
+        right: "rechts",
+        stop: "stop",
+      }
+    : {
+        up: "cam_up",
+        down: "cam_down",
+        left: "cam_left",
+        right: "cam_right",
+        stop: "cam_stop",
+      };
+
   return (
-    <View style={styles.padGrid}>
+    <View style={styles.padContainer}>
+      {label && <Text style={styles.padLabel}>{label}</Text>}
+
       <View style={styles.padRow}>
-        <View style={styles.emptyCell} />
+        <View style={{ width: cellSize, height: cellSize }} />
         <TechBtn
-          icon="caret-up"
-          size={60}
-          onPressIn={() => moveFn("vooruit")}
-          onPressOut={() => moveFn("stop")}
+          icon={icons.up}
+          size={size}
+          onPressIn={() => moveFn(cmds.up)}
+          onPressOut={() => moveFn(cmds.stop)}
         />
-        <View style={styles.emptyCell} />
+        <View style={{ width: cellSize, height: cellSize }} />
       </View>
+
       <View style={styles.padRow}>
         <TechBtn
-          icon="caret-back"
-          size={60}
-          onPressIn={() => moveFn("links")}
-          onPressOut={() => moveFn("stop")}
+          icon={icons.left}
+          size={size}
+          onPressIn={() => moveFn(cmds.left)}
+          onPressOut={() => moveFn(cmds.stop)}
         />
-        <Pressable
-          style={({ pressed }) => [
-            styles.stopCore,
-            pressed && { transform: [{ scale: 0.9 }] },
-          ]}
-          onPress={() => moveFn("stop")}
+        <View
+          style={{
+            width: cellSize,
+            height: cellSize,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
         >
-          <View style={styles.stopIcon} />
-          <Text style={styles.stopLabel}>STOP</Text>
-        </Pressable>
+          <View style={styles.centerPointDot} />
+        </View>
         <TechBtn
-          icon="caret-forward"
-          size={60}
-          onPressIn={() => moveFn("rechts")}
-          onPressOut={() => moveFn("stop")}
+          icon={icons.right}
+          size={size}
+          onPressIn={() => moveFn(cmds.right)}
+          onPressOut={() => moveFn(cmds.stop)}
         />
       </View>
+
       <View style={styles.padRow}>
-        <View style={styles.emptyCell} />
+        <View style={{ width: cellSize, height: cellSize }} />
         <TechBtn
-          icon="caret-down"
-          size={60}
-          onPressIn={() => moveFn("achteruit")}
-          onPressOut={() => moveFn("stop")}
+          icon={icons.down}
+          size={size}
+          onPressIn={() => moveFn(cmds.down)}
+          onPressOut={() => moveFn(cmds.stop)}
         />
-        <View style={styles.emptyCell} />
-      </View>
-    </View>
-  );
-};
-
-// --- NIEUW: CAMERA BEDIENING (MET LINKS/RECHTS) ---
-const CameraPad = ({ moveFn }: { moveFn: (d: string) => void }) => {
-  return (
-    <View style={styles.camPadContainer}>
-      <Text style={styles.camLabel}>CAM</Text>
-
-      {/* Boven */}
-      <View style={styles.camRow}>
-        <TechBtn
-          icon="chevron-up"
-          size={45}
-          onPressIn={() => moveFn("cam_up")}
-          onPressOut={() => moveFn("cam_stop")}
-        />
-      </View>
-
-      {/* Midden (Links - Rechts) */}
-      <View style={[styles.camRow, { gap: 10, marginVertical: 5 }]}>
-        <TechBtn
-          icon="chevron-back"
-          size={45}
-          onPressIn={() => moveFn("cam_left")}
-          onPressOut={() => moveFn("cam_stop")}
-        />
-        {/* Ruimte in het midden */}
-        <View style={{ width: 10 }} />
-        <TechBtn
-          icon="chevron-forward"
-          size={45}
-          onPressIn={() => moveFn("cam_right")}
-          onPressOut={() => moveFn("cam_stop")}
-        />
-      </View>
-
-      {/* Onder */}
-      <View style={styles.camRow}>
-        <TechBtn
-          icon="chevron-down"
-          size={45}
-          onPressIn={() => moveFn("cam_down")}
-          onPressOut={() => moveFn("cam_stop")}
-        />
+        <View style={{ width: cellSize, height: cellSize }} />
       </View>
     </View>
   );
@@ -164,7 +190,6 @@ export default function RobotScreen() {
   const [isFullscreen, setIsFullscreen] = React.useState(false);
 
   const move = (dir: string) => {
-    // Stuurt commando naar Python server
     fetch(`${COMMAND_IP}/move/${dir}`).catch(() => setStatus("OFFLINE"));
   };
 
@@ -175,68 +200,42 @@ export default function RobotScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      // 1. Bij start: toon navigatiebalk
-      if (Platform.OS === "android") {
+      if (Platform.OS === "android")
         NavigationBar.setVisibilityAsync("visible");
-      }
-
       reloadVideo();
-
       return () => {
-        // 2. CLEANUP: Reset alles bij verlaten
         move("stop");
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
-
-        if (Platform.OS === "android") {
+        if (Platform.OS === "android")
           NavigationBar.setVisibilityAsync("visible");
-        }
-
-        // Reset App UI
-        navigation.setOptions({
-          headerShown: true,
-          tabBarStyle: undefined,
-        });
+        navigation.setOptions({ headerShown: true, tabBarStyle: undefined });
       };
     }, [navigation]),
   );
 
   const toggleFullscreen = async () => {
     if (isFullscreen) {
-      // --- TERUG NAAR NORMAAL ---
-      navigation.setOptions({
-        headerShown: true,
-        tabBarStyle: undefined,
-      });
-
-      if (Platform.OS === "android") {
+      navigation.setOptions({ headerShown: true, tabBarStyle: undefined });
+      if (Platform.OS === "android")
         await NavigationBar.setVisibilityAsync("visible");
-      }
-
       await ScreenOrientation.lockAsync(
         ScreenOrientation.OrientationLock.PORTRAIT,
       );
-
       setIsFullscreen(false);
     } else {
-      // --- NAAR FULLSCREEN ---
       navigation.setOptions({
         headerShown: false,
         tabBarStyle: { display: "none" },
       });
-
       await ScreenOrientation.lockAsync(
         ScreenOrientation.OrientationLock.LANDSCAPE,
       );
-
       if (Platform.OS === "android") {
         await NavigationBar.setVisibilityAsync("hidden");
         try {
           await NavigationBar.setBehaviorAsync("overlay-swipe");
-        } catch (e) {
-          // Edge-to-edge devices support fix
-        }
+        } catch (e) {}
       }
-
       setIsFullscreen(true);
     }
     setTimeout(reloadVideo, 100);
@@ -247,42 +246,13 @@ export default function RobotScreen() {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <style>
-          html, body { 
-            margin:0; padding:0; background: #000; 
-            width: 100vw; height: 100vh; 
-            overflow: hidden; 
-            display: flex; justify-content: center; align-items: center; 
-          }
-          img { 
-            width: 100%; height: 100%; 
-            object-fit: cover; 
-            display: block; 
-            filter: brightness(1.2);
-          } 
+          html, body { margin:0; padding:0; background: #000; width: 100vw; height: 100vh; overflow: hidden; display: flex; justify-content: center; align-items: center; }
+          img { width: 100%; height: 100%; object-fit: cover; display: block; } 
         </style>
       </head>
       <body><img src="${VIDEO_IP}/video_feed?ts=${webKey}" /></body>
     </html>
   `;
-
-  const StatusDisplay = ({ style }: any) => (
-    <View style={[styles.statusBadge, style]}>
-      <View
-        style={[
-          styles.statusDot,
-          {
-            backgroundColor:
-              status === "ONLINE"
-                ? "#3cdc78"
-                : status === "CONNECTING"
-                  ? "#fbbf24"
-                  : "#ef4444",
-          },
-        ]}
-      />
-      <Text style={styles.statusText}>{status}</Text>
-    </View>
-  );
 
   return (
     <View style={styles.root}>
@@ -291,45 +261,34 @@ export default function RobotScreen() {
       {/* --- PORTRAIT MODE --- */}
       {!isFullscreen && (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-          <View style={styles.monitorFrame}>
-            <View style={styles.screenInner}>
-              <WebView
-                key={`p-${webKey}`}
-                source={{ html }}
-                style={{ flex: 1, backgroundColor: "black" }}
-                scrollEnabled={false}
-                onLoadEnd={() => setStatus("ONLINE")}
-                onError={() => setStatus("OFFLINE")}
-              />
+          {/* VIDEO SECTIE - GROTER GEMAAKT */}
+          <View style={styles.videoContainer}>
+            <WebView
+              key={`p-${webKey}`}
+              source={{ html }}
+              style={{ flex: 1, backgroundColor: "#080a0c" }}
+              scrollEnabled={false}
+              onLoadEnd={() => setStatus("ONLINE")}
+              onError={() => setStatus("OFFLINE")}
+            />
+          </View>
 
-              <View style={styles.monitorOverlay}>
-                <StatusDisplay />
-                <View style={{ flexDirection: "row", gap: 10 }}>
-                  <TechBtn
-                    icon="refresh"
-                    size={36}
-                    onPress={reloadVideo}
-                    style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-                  />
-                  <TechBtn
-                    icon="scan"
-                    size={36}
-                    onPress={toggleFullscreen}
-                    style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-                  />
-                </View>
-              </View>
+          {/* CONTROL BAR (Status & Refresh) */}
+          <View style={styles.controlBar}>
+            <StatusBadge status={status} />
+
+            <View style={{ flexDirection: "row", gap: 15 }}>
+              <TechBtn icon="refresh" size={40} onPress={reloadVideo} />
+              <TechBtn icon="scan" size={40} onPress={toggleFullscreen} />
             </View>
           </View>
 
-          <View style={styles.controlsSection}>
-            {/* Hier voegen we de CameraPad toe naast de ControlPad */}
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 20 }}
-            >
-              <ControlPad moveFn={move} />
-              <CameraPad moveFn={move} />
-            </View>
+          {/* KNOPPEN SECTIE - KLEINER GEMAAKT */}
+          <View style={styles.portraitControls}>
+            {/* size=42 is veel compacter dan de standaard 55 */}
+            <DPad moveFn={move} type="move" label="RIJDEN" size={42} />
+            <View style={styles.divider} />
+            <DPad moveFn={move} type="cam" label="KIJKEN" size={42} />
           </View>
         </View>
       )}
@@ -348,38 +307,45 @@ export default function RobotScreen() {
             />
           </View>
 
+          {/* HUD LAYER */}
           <View
             style={[
               styles.fsHud,
               {
-                paddingLeft: insets.left > 0 ? insets.left : 20,
-                paddingRight: insets.right > 0 ? insets.right : 20,
+                paddingLeft: insets.left || 20,
+                paddingRight: insets.right || 20,
               },
             ]}
           >
-            <View style={styles.fsLeft}>
-              <ControlPad moveFn={move} />
+            {/* Status in Fullscreen (Toegevoegd) */}
+            <View style={styles.fsTopCenter}>
+              <StatusBadge status={status} />
             </View>
 
-            <View style={styles.fsCenter}>
-              <StatusDisplay style={{ backgroundColor: "rgba(0,0,0,0.6)" }} />
+            {/* Linksonder: RIJDEN (Grootte standaard 50 is hier prima) */}
+            <View style={styles.fsBottomLeft}>
+              <DPad moveFn={move} type="move" size={55} />
             </View>
 
-            <View style={styles.fsRight}>
-              <View style={styles.actionColumn}>
-                {/* Camera controls in fullscreen */}
-                <CameraPad moveFn={move} />
+            {/* Rechtsonder: KIJKEN */}
+            <View style={styles.fsBottomRight}>
+              <DPad moveFn={move} type="cam" size={55} />
+            </View>
 
-                <View style={{ height: 10 }} />
-
-                <TechBtn icon="refresh" size={50} onPress={reloadVideo} />
-                <TechBtn
-                  icon="close"
-                  size={50}
-                  danger
-                  onPress={toggleFullscreen}
-                />
-              </View>
+            {/* Rechtsboven: Acties */}
+            <View style={styles.fsTopRight}>
+              <TechBtn
+                icon="refresh"
+                size={45}
+                onPress={reloadVideo}
+                style={{ marginBottom: 15 }}
+              />
+              <TechBtn
+                icon="close"
+                size={45}
+                danger
+                onPress={toggleFullscreen}
+              />
             </View>
           </View>
         </View>
@@ -390,86 +356,87 @@ export default function RobotScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#050505" },
-  container: { flex: 1 },
+  container: { flex: 1, paddingBottom: 20 },
 
-  header: {
-    color: "white",
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: THEME.font,
-    fontWeight: "bold",
-    letterSpacing: 3,
-    marginBottom: 10,
-    marginTop: 10,
-    opacity: 0.8,
-  },
-  footerText: {
-    color: "#555",
-    fontFamily: THEME.font,
-    fontSize: 10,
-    letterSpacing: 2,
-    marginTop: 20,
-  },
-
-  monitorFrame: {
-    marginHorizontal: 12,
-    aspectRatio: 16 / 9,
-    backgroundColor: "#111",
-    borderRadius: 12,
-    padding: 4,
-    borderWidth: 1,
+  // --- VIDEO STYLES (AANGEPAST) ---
+  videoContainer: {
+    width: "100%",
+    aspectRatio: 16 / 9, // Behoudt breedbeeld
+    backgroundColor: "#000",
+    borderBottomWidth: 1,
     borderColor: "#333",
+    // Geen margin meer, dus schermvullend in de breedte
   },
-  screenInner: {
-    flex: 1,
-    borderRadius: 8,
-    overflow: "hidden",
-    position: "relative",
-  },
-  monitorOverlay: {
-    position: "absolute",
-    top: 10,
-    left: 10,
-    right: 10,
+
+  // --- CONTROL BAR (NIEUW) ---
+  controlBar: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+    marginBottom: 10,
   },
 
-  controlsSection: { flex: 1, justifyContent: "center", alignItems: "center" },
-
-  padGrid: { width: 200, height: 200, justifyContent: "center" },
-  padRow: {
+  // Status Badge Styling
+  badge: {
     flexDirection: "row",
-    height: 66,
     alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyCell: { width: 60, height: 60 },
-
-  // --- STYLES VOOR DE NIEUWE CAMERA PAD ---
-  camPadContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
-    padding: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: THEME.border,
   },
-  camRow: {
+  dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+  badgeText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 10,
+    fontFamily: THEME.font,
+    letterSpacing: 1,
+  },
+
+  // --- PORTRAIT CONTROLS (COMPACTER) ---
+  portraitControls: {
+    flex: 1, // Vult de rest van het scherm
     flexDirection: "row",
+    justifyContent: "space-evenly",
+    alignItems: "center",
+    // Minder padding zodat het hoger op het scherm staat indien nodig
+  },
+  divider: {
+    width: 1,
+    height: "50%",
+    backgroundColor: "rgba(255,255,255,0.1)",
+  },
+
+  // --- BUTTON & PAD STYLES ---
+  padContainer: {
     alignItems: "center",
     justifyContent: "center",
   },
-  camLabel: {
+  padLabel: {
     color: THEME.primary,
     fontFamily: THEME.font,
-    fontSize: 10,
-    fontWeight: "bold",
-    marginBottom: 5,
-    letterSpacing: 1,
+    fontSize: 9, // Iets kleiner font
+    letterSpacing: 2,
+    marginBottom: 8,
+    opacity: 0.7,
+    textTransform: "uppercase",
   },
-  // ----------------------------------------
+  padRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  centerPointDot: {
+    width: 2,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: "rgba(255,255,255,0.3)",
+  },
 
   techBtnBase: {
     backgroundColor: THEME.glass,
@@ -477,74 +444,39 @@ const styles = StyleSheet.create({
     borderColor: THEME.border,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "black",
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: "#00f0ff",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    margin: 2, // Iets minder marge tussen knoppen
+  },
+  techBtnPressed: {
+    backgroundColor: THEME.glassActive,
+    borderColor: THEME.primary,
+    transform: [{ scale: 0.92 }],
   },
   techBtnDanger: {
-    backgroundColor: "rgba(255, 40, 40, 0.2)",
-    borderColor: "rgba(255, 60, 60, 0.5)",
+    borderColor: THEME.danger,
+    backgroundColor: "rgba(255, 42, 42, 0.15)",
   },
 
-  stopCore: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: "rgba(220, 20, 20, 0.9)",
-    borderWidth: 2,
-    borderColor: "rgba(255, 100, 100, 0.4)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginHorizontal: 4,
-    shadowColor: "#f00",
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    zIndex: 10,
-  },
-  stopIcon: {
-    width: 16,
-    height: 16,
-    backgroundColor: "white",
-    borderRadius: 2,
-    marginBottom: 2,
-  },
-  stopLabel: {
-    color: "white",
-    fontSize: 9,
-    fontWeight: "bold",
-    fontFamily: THEME.font,
-  },
-
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.6)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
-  statusText: {
-    color: "white",
-    fontSize: 10,
-    fontFamily: THEME.font,
-    fontWeight: "bold",
-  },
-
+  // --- FULLSCREEN STYLES ---
   fsRoot: { flex: 1, backgroundColor: "black" },
-  fsVideoLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
-  fsHud: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 10,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 20,
+  fsVideoLayer: { ...StyleSheet.absoluteFillObject },
+  fsHud: { ...StyleSheet.absoluteFillObject, zIndex: 10 },
+
+  fsTopCenter: {
+    position: "absolute",
+    top: 20,
+    left: 0,
+    right: 0,
+    alignItems: "center",
   },
-  fsLeft: { flex: 1, justifyContent: "flex-end", paddingBottom: 10 },
-  fsCenter: { marginTop: 10 },
-  fsRight: { flex: 1, justifyContent: "center", alignItems: "flex-end" },
-  actionColumn: { gap: 20, marginRight: 10, alignItems: "center" },
+  fsBottomLeft: { position: "absolute", bottom: 30, left: 30 },
+  fsBottomRight: { position: "absolute", bottom: 30, right: 30 },
+  fsTopRight: {
+    position: "absolute",
+    top: 30,
+    right: 30,
+    alignItems: "flex-end",
+  },
 });
