@@ -6,7 +6,7 @@ const KEY_PI_BASE = "pi_base_url";
 // Dit is je standaard URL (voor video en medicijnen op poort 5001)
 export async function getPiBaseUrl(): Promise<string> {
   const saved = await AsyncStorage.getItem(KEY_PI_BASE);
-  return saved ?? "http://10.217.173.75:5001";
+  return saved ?? "http://10.81.173.75:5001";
 }
 
 export async function setPiBaseUrl(url: string): Promise<void> {

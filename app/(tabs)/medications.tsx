@@ -35,7 +35,7 @@ const BARCODE_DB: Record<
   "3056789012342": { name: "Metoprolol", dosage: "50mg", stock: 100 },
 };
 
-const ROBOT_API = "http://10.217.173.75:5001";
+const ROBOT_API = "http://10.81.173.75:5001";
 
 export default function MedicijnLijstScreen() {
   const [meds, setMeds] = useState<Medication[]>([]);

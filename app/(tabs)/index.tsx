@@ -33,7 +33,7 @@ type Task = {
 
 const DEMO_MISS_LIMIT_SECONDS = 5;
 // Zorg dat dit IP klopt met je server
-const ROBOT_API_URL = "http://10.217.173.75:5001";
+const ROBOT_API_URL = "http://10.81.173.75:5001";
 
 export default function VandaagScreen() {
   const [selectedDate, setSelectedDate] = useState(new Date());
