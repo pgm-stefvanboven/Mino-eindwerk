@@ -401,11 +401,10 @@ const styles = StyleSheet.create({
 
   // --- PORTRAIT CONTROLS (COMPACTER) ---
   portraitControls: {
-    flex: 1, // Vult de rest van het scherm
+    flex: 1,
     flexDirection: "row",
     justifyContent: "space-evenly",
     alignItems: "center",
-    // Minder padding zodat het hoger op het scherm staat indien nodig
   },
   divider: {
     width: 1,

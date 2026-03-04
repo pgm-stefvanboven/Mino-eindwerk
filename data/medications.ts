@@ -7,6 +7,7 @@ export type Medication = {
   dosage: string;
   stock: number;
   isOrdered?: boolean;
+  lastScannedAt?: number; // Houdt bij wanneer de barcode voor het laatst is gescand
 };
 
 const STORAGE_KEY = "MEDICATION_DB_STOCK";
@@ -17,8 +18,8 @@ export const DEMO_MED_ID = "6";
 // 1. The standard database (if you reset the app)
 export const INITIAL_GLOBAL_MEDS: Medication[] = [
   { id: "1", name: "Paracetamol", dosage: "500mg", stock: 24 },
-  { id: "2", name: "Ibuprofen", dosage: "400mg", stock: 5 }, // Almost out!
-  { id: "3", name: "Metoprolol", dosage: "50mg", stock: 8 }, // Almost out!
+  { id: "2", name: "Ibuprofen", dosage: "400mg", stock: 5 },
+  { id: "3", name: "Metoprolol", dosage: "50mg", stock: 8 },
   { id: "4", name: "Vitamin D", dosage: "10mcg", stock: 60 },
   { id: "5", name: "Dafalgan Forte", dosage: "1g", stock: 30 },
 

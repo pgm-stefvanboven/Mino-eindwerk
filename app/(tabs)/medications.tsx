@@ -28,14 +28,22 @@ import {
 // --- DATABASE VOOR BARCODES ---
 const BARCODE_DB: Record<
   string,
-  { name: string; dosage: string; stock: number }
+  { name: string; dosage: string; stockToAdd: number }
 > = {
-  "5410123456786": { name: "Dafalgan Forte", dosage: "1g", stock: 30 },
-  "8714567890128": { name: "Ibuprofen", dosage: "400mg", stock: 30 },
-  "3056789012342": { name: "Metoprolol", dosage: "50mg", stock: 100 },
+  "5410123456786": { name: "Dafalgan Forte", dosage: "1g", stockToAdd: 20 }, // Doosje van 20
+  "5410123456799": { name: "Dafalgan Forte", dosage: "1g", stockToAdd: 50 }, // Fictief: doosje van 50
+  "8714567890128": { name: "Ibuprofen", dosage: "400mg", stockToAdd: 30 },
+  "3056789012342": { name: "Metoprolol", dosage: "50mg", stockToAdd: 100 },
 };
 
 const ROBOT_API = "http://10.81.173.75:5001";
+
+// --- SYSTEM LIMITS ---
+const MAX_STOCK_PER_MED = 500;
+const SCAN_COOLDOWN = 2000; // 2 seconden technische anti-double scan
+
+// Tijdsslot voor jongdementie: 12 uur in milliseconden
+const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 
 export default function MedicijnLijstScreen() {
   const [meds, setMeds] = useState<Medication[]>([]);
@@ -56,9 +64,10 @@ export default function MedicijnLijstScreen() {
   const [newDosage, setNewDosage] = useState("");
   const [newStock, setNewStock] = useState("");
 
-  const [isRefilling, setIsRefilling] = useState(false); // True = bestaand bijvullen, False = nieuw toevoegen
-  const [isLocked, setIsLocked] = useState(false); // Als true, zijn velden ingevuld door scanner
+  const [isRefilling, setIsRefilling] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [lastScanTime, setLastScanTime] = useState(0);
 
   // Caregiver info
   const [caregiverName, setCaregiverName] = useState("Familie");
@@ -76,7 +85,7 @@ export default function MedicijnLijstScreen() {
         if (relation) setCaregiverRelation(relation);
       };
       loadContact();
-    }, [])
+    }, []),
   );
 
   // --- CAMERA LOGIC ---
@@ -90,60 +99,110 @@ export default function MedicijnLijstScreen() {
   };
 
   const handleBarcodeScanned = ({ data }: { data: string }) => {
+    const now = Date.now();
+
+    // Technische scan cooldown
+    if (now - lastScanTime < SCAN_COOLDOWN) {
+      return;
+    }
+
+    setLastScanTime(now);
     setCameraVisible(false);
+
     const foundProduct = BARCODE_DB[data];
 
     if (foundProduct) {
       if (isRefilling && selectedMed) {
         // SCENARIO 1: BIJVULLEN BESTAAND
-        if (foundProduct.name !== selectedMed.name) {
+
+        // Controle 1: Scannen ze wel het juiste medicijn?
+        if (
+          foundProduct.name.toLowerCase() !== selectedMed.name.toLowerCase()
+        ) {
           setTimeout(() => {
             Alert.alert(
               "⚠️ Foutief Medicijn",
-              `Je probeert ${selectedMed.name} bij te vullen, maar je scande ${foundProduct.name}.`
+              `Je probeert ${selectedMed.name} bij te vullen, maar je scande ${foundProduct.name}.`,
             );
           }, 500);
           return;
         }
 
-        // Update stock direct
-        const updateStockLogic = async (amount: number) => {
+        // Controle 2: DEMENTIE BEVEILIGING (Hebben ze dit recent al gedaan?)
+        if (
+          selectedMed.lastScannedAt &&
+          now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
+        ) {
+          setTimeout(() => {
+            Alert.alert(
+              "🛑 Al toegevoegd!",
+              "Je hebt dit medicijn vandaag al bijgevuld in de app. Om verwarring te voorkomen, hebben we deze scan geblokkeerd.",
+            );
+          }, 500);
+          return;
+        }
+
+        // Update stock direct en zet de tijd-blokkade aan
+        const updateStockLogic = async () => {
+          let updatedItem: Medication | null = null;
+
           const updatedList = meds.map((m) => {
             if (m.id === selectedMed.id) {
-              const updatedStock = Math.max(0, m.stock + amount);
-              // Update ook lokale state voor de modal
-              setSelectedMed({ ...m, stock: updatedStock, isOrdered: false });
-              return { ...m, stock: updatedStock, isOrdered: false };
+              const updatedStock = Math.min(
+                MAX_STOCK_PER_MED,
+                m.stock + foundProduct.stockToAdd,
+              );
+
+              if (updatedStock === MAX_STOCK_PER_MED) {
+                Alert.alert(
+                  "Voorraad limiet bereikt",
+                  "Maximum voorraad voor dit medicijn bereikt.",
+                );
+              }
+
+              updatedItem = {
+                ...m,
+                stock: updatedStock,
+                isOrdered: false,
+                lastScannedAt: now, // <--- Blokkade tijdstip opslaan!
+              };
+              return updatedItem;
             }
             return m;
           });
+
+          if (updatedItem) {
+            setSelectedMed(updatedItem);
+          }
           setMeds(updatedList);
           await saveMedications(updatedList);
-          showCustomSuccess("Gelukt!", `Voorraad bijgewerkt.`);
+
+          showCustomSuccess(
+            "Gelukt!",
+            `Voorraad verhoogd met ${foundProduct.stockToAdd} stuks.`,
+          );
         };
 
-        // Voeg standaard doos grootte toe
-        updateStockLogic(foundProduct.stock);
+        updateStockLogic();
       } else {
-        // SCENARIO 2: NIEUW TOEVOEGEN
+        // SCENARIO 2: NIEUW TOEVOEGEN VIA DE PLUS KNOP
         setNewName(foundProduct.name);
         setNewDosage(foundProduct.dosage);
-        setNewStock(foundProduct.stock.toString());
-        setIsLocked(true); // Velden op slot want het is een geverifieerd product
+        setNewStock(foundProduct.stockToAdd.toString());
+        setIsLocked(true);
 
-        // Zorg dat het toevoeg scherm open staat
         setAddModalVisible(true);
 
         showCustomSuccess(
           "Product Herkend",
-          `EAN: ${data}\n${foundProduct.name} (${foundProduct.dosage})`
+          `Doosje met ${foundProduct.stockToAdd} stuks gevonden.`,
         );
       }
     } else {
       setTimeout(() => {
         Alert.alert(
           "Onbekend Product",
-          `Code ${data} staat niet in de demo database.`
+          `Code ${data} staat niet in het systeem.`,
         );
       }, 500);
     }
@@ -156,15 +215,66 @@ export default function MedicijnLijstScreen() {
       return;
     }
 
-    const newMedItem: Medication = {
-      id: Date.now().toString(),
-      name: newName,
-      dosage: newDosage || "N.v.t.",
-      stock: parseInt(newStock) || 0,
-      isOrdered: false,
-    };
+    const stockAmount = parseInt(newStock) || 0;
+    const now = Date.now();
 
-    const updatedList = [...meds, newMedItem];
+    // --- CHECK OF MEDICIJN AL BESTAAT (Op 1 hoop gooien) ---
+    const existingMed = meds.find(
+      (m) =>
+        m.name.toLowerCase() === newName.toLowerCase() &&
+        m.dosage.toLowerCase() === newDosage.toLowerCase(),
+    );
+
+    let updatedList: Medication[];
+
+    if (existingMed) {
+      // Dementie Beveiliging ook hier toepassen (voor het geval ze het handmatig toevoegen)
+      if (
+        existingMed.lastScannedAt &&
+        now - existingMed.lastScannedAt < DEMENTIA_TIME_LOCK
+      ) {
+        Alert.alert(
+          "🛑 Al toegevoegd!",
+          "Dit medicijn is vandaag al een keer toegevoegd of bijgewerkt.",
+        );
+        return;
+      }
+
+      // --- VOORRAAD VERHOGEN EN OP DEZELFDE HOOP GOOIEN ---
+      const newStockValue = Math.min(
+        MAX_STOCK_PER_MED,
+        existingMed.stock + stockAmount,
+      );
+
+      updatedList = meds.map((m) =>
+        m.id === existingMed.id
+          ? { ...m, stock: newStockValue, lastScannedAt: now }
+          : m,
+      );
+
+      showCustomSuccess(
+        "Voorraad bijgewerkt",
+        `${existingMed.name} voorraad verhoogd.`,
+      );
+    } else {
+      // --- HELEMAAL NIEUW MEDICIJN ---
+      const newMedItem: Medication = {
+        id: Date.now().toString(),
+        name: newName,
+        dosage: newDosage || "N.v.t.",
+        stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
+        isOrdered: false,
+        lastScannedAt: now, // Direct beveiligen tegen dubbelklikken
+      };
+
+      updatedList = [...meds, newMedItem];
+
+      showCustomSuccess(
+        "Medicijn toegevoegd",
+        `${newName} toegevoegd aan voorraad.`,
+      );
+    }
+
     setMeds(updatedList);
     await saveMedications(updatedList);
 
@@ -210,17 +320,15 @@ export default function MedicijnLijstScreen() {
       });
       setMeds(updatedList);
       saveMedications(updatedList);
-      // Update local selection to show checkmark immediately
       setSelectedMed({ ...selectedMed, isOrdered: true });
     }
 
     setTimeout(() => {
       setIsSending(false);
       setEditModalVisible(false);
-      setEditModalVisible(false);
       showCustomSuccess(
         "Gemeld aan familie",
-        `Verzoek voor ${medName} is succesvol verstuurd.`
+        `Verzoek voor ${medName} is succesvol verstuurd.`,
       );
     }, 1500);
   };
@@ -312,11 +420,10 @@ export default function MedicijnLijstScreen() {
         }}
       />
 
-      {/* --- FAB (Floating Action Button) MET HET JUISTE SCAN ICOON --- */}
+      {/* --- FAB (ADD BUTTON) --- */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => {
-          // Reset fields for new entry
           setNewName("");
           setNewDosage("");
           setNewStock("");
@@ -327,7 +434,7 @@ export default function MedicijnLijstScreen() {
         <Ionicons name="barcode-outline" size={30} color="white" />
       </TouchableOpacity>
 
-      {/* --- MODAL 1: ADD NEW MEDICINE (LOCKED & STYLED) --- */}
+      {/* --- MODAL 1: ADD NEW MEDICINE --- */}
       <Modal
         animationType="slide"
         visible={addModalVisible}
@@ -346,7 +453,6 @@ export default function MedicijnLijstScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* Scan Button inside Add Modal */}
               <TouchableOpacity
                 style={styles.scanSection}
                 onPress={() => startCamera(false)}
@@ -369,7 +475,6 @@ export default function MedicijnLijstScreen() {
                 </View>
               )}
 
-              {/* NAAM MEDICIJN (LOCKED NA SCAN) */}
               <Text style={styles.label}>NAAM MEDICIJN</Text>
               <View style={styles.inputWrapper}>
                 <TextInput
@@ -378,7 +483,7 @@ export default function MedicijnLijstScreen() {
                   placeholderTextColor="#666"
                   value={newName}
                   onChangeText={setNewName}
-                  editable={!isLocked} // KAN NIET AANPASSEN NA SCAN
+                  editable={!isLocked}
                 />
                 {isLocked && (
                   <Ionicons
@@ -390,7 +495,6 @@ export default function MedicijnLijstScreen() {
                 )}
               </View>
 
-              {/* DOSERING (LOCKED NA SCAN) */}
               <Text style={styles.label}>DOSERING</Text>
               <View style={styles.inputWrapper}>
                 <TextInput
@@ -399,7 +503,7 @@ export default function MedicijnLijstScreen() {
                   placeholderTextColor="#666"
                   value={newDosage}
                   onChangeText={setNewDosage}
-                  editable={!isLocked} // KAN NIET AANPASSEN NA SCAN
+                  editable={!isLocked}
                 />
                 {isLocked && (
                   <Ionicons
@@ -411,18 +515,16 @@ export default function MedicijnLijstScreen() {
                 )}
               </View>
 
-              {/* VOORRAAD (ALTIJD AANPASBAAR) */}
               <Text style={styles.label}>AANTAL STUKS / VOORRAAD</Text>
               <View style={styles.inputWrapper}>
                 <TextInput
-                  style={styles.input} // GEEN LOCKED STYLE HIER
+                  style={styles.input}
                   placeholder="0"
                   placeholderTextColor="#666"
                   value={newStock}
                   onChangeText={setNewStock}
                   keyboardType="numeric"
                 />
-                {/* Geen slot icoon hier, want je mag dit altijd aanpassen */}
               </View>
 
               <TouchableOpacity style={styles.saveBtn} onPress={handleSaveNew}>
@@ -457,22 +559,19 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 3: CAMERA (GECORRIGEERD) --- */}
+      {/* --- MODAL 3: CAMERA --- */}
       <Modal
         animationType="slide"
         visible={cameraVisible}
         onRequestClose={() => setCameraVisible(false)}
       >
         <View style={{ flex: 1, backgroundColor: "black" }}>
-          {/* 1. De Camera staat nu 'los', zonder children */}
           <CameraView
             style={StyleSheet.absoluteFill}
             facing="back"
             onBarcodeScanned={handleBarcodeScanned}
             barcodeScannerSettings={{ barcodeTypes: ["ean13", "qr"] }}
           />
-
-          {/* 2. De Overlay staat er nu 'overheen' via absolute positionering */}
           <SafeAreaView
             style={[styles.cameraOverlay, StyleSheet.absoluteFill]}
             pointerEvents="box-none"
@@ -483,11 +582,9 @@ export default function MedicijnLijstScreen() {
             >
               <Ionicons name="close" size={30} color="white" />
             </TouchableOpacity>
-
             <View style={styles.scanFrame}>
               <View style={styles.scanLine} />
             </View>
-
             <Text style={styles.cameraText}>
               {isRefilling
                 ? `Scan doosje ${selectedMed?.name}`
@@ -526,8 +623,8 @@ export default function MedicijnLijstScreen() {
             <TouchableOpacity
               style={styles.bigScanBtn}
               onPress={() => {
-                setEditModalVisible(false); // Sluit eerst dit scherm
-                setTimeout(() => startCamera(true), 500); // Start dan camera
+                setEditModalVisible(false);
+                setTimeout(() => startCamera(true), 500);
               }}
             >
               <Ionicons name="scan-circle" size={40} color="white" />
@@ -612,8 +709,6 @@ const styles = StyleSheet.create({
   },
   subTitle: { color: "#888", fontSize: 13, marginTop: 4 },
   listContent: { padding: 20, paddingBottom: 100 },
-
-  // --- CARDS ---
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -656,8 +751,6 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#ccc", fontSize: 12, fontWeight: "500" },
   stockText: { color: "#666", fontSize: 12 },
-
-  // --- FAB (ADD BUTTON) ---
   fab: {
     position: "absolute",
     right: 20,
@@ -674,8 +767,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-
-  // --- MODALS ALGEMENE STYLING ---
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.85)",
@@ -693,7 +784,7 @@ const styles = StyleSheet.create({
   modalContentFullScreen: {
     flex: 1,
     padding: 20,
-    paddingTop: 50, // Iets meer ruimte voor de notch
+    paddingTop: 50,
     backgroundColor: "#09090b",
   },
   modalHeader: {
@@ -703,8 +794,6 @@ const styles = StyleSheet.create({
     marginBottom: 25,
   },
   modalTitle: { color: "white", fontSize: 22, fontWeight: "bold" },
-
-  // --- SUCCESS POPUP ---
   successContent: {
     backgroundColor: "#1c1c1e",
     width: "80%",
@@ -744,8 +833,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   successBtnText: { color: "#052e16", fontWeight: "bold", fontSize: 16 },
-
-  // --- SCAN SECTION ---
   scanSection: {
     backgroundColor: "#131313",
     padding: 20,
@@ -760,7 +847,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     alignItems: "center",
-    backgroundColor: "#2563eb", // Iets dieper blauw
+    backgroundColor: "#2563eb",
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 10,
@@ -768,8 +855,6 @@ const styles = StyleSheet.create({
   },
   scanButtonText: { fontWeight: "700", color: "white", fontSize: 15 },
   scanHint: { color: "#666", fontSize: 12, textAlign: "center" },
-
-  // --- INPUT FIELDS & LOCKING ---
   label: {
     color: "#888",
     fontSize: 11,
@@ -780,37 +865,27 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginLeft: 4,
   },
-  inputWrapper: {
-    position: "relative", // Nodig om het slotje te positioneren
-    justifyContent: "center",
-  },
+  inputWrapper: { position: "relative", justifyContent: "center" },
   input: {
     backgroundColor: "#1c1c1e",
     color: "white",
     padding: 16,
-    paddingRight: 40, // Ruimte maken voor het slot icoon
+    paddingRight: 40,
     borderRadius: 12,
     fontSize: 16,
     borderWidth: 1,
     borderColor: "#333",
   },
-  // Nieuwe stijl voor gesloten velden (ziet eruit als 'read-only')
   inputLocked: {
-    backgroundColor: "#111", // Donkerder
-    borderColor: "transparent", // Geen rand
-    color: "#666", // Tekst donkerder
+    backgroundColor: "#111",
+    borderColor: "transparent",
+    color: "#666",
   },
-  lockIcon: {
-    position: "absolute",
-    right: 15,
-    opacity: 0.5,
-  },
-
-  // --- VERIFIED BANNER ---
+  lockIcon: { position: "absolute", right: 15, opacity: 0.5 },
   lockedBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(74, 222, 128, 0.15)", // Subtiel groen
+    backgroundColor: "rgba(74, 222, 128, 0.15)",
     padding: 12,
     borderRadius: 12,
     marginBottom: 10,
@@ -823,8 +898,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginLeft: 10,
   },
-
-  // --- BUTTONS ---
   saveBtn: {
     backgroundColor: "#007AFF",
     padding: 18,
@@ -842,8 +915,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 0.5,
   },
-
-  // --- OVERIGE STYLES (CAMERA ETC) ---
   bigScanBtn: {
     flexDirection: "row",
     alignItems: "center",

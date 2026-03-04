@@ -104,7 +104,7 @@ export default function SettingsScreen() {
 
   const confirmReset = () => {
     showModal(
-      "⚠️ Alles Wissen?",
+      "Alles Wissen?",
       "Dit verwijdert alle medicatie-historiek en voorraad. Dit kan niet ongedaan gemaakt worden.",
       "warning",
       async () => {
