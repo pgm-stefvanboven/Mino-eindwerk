@@ -121,24 +121,33 @@ export default function MedicijnLijstScreen() {
         ) {
           setTimeout(() => {
             Alert.alert(
-              "⚠️ Foutief Medicijn",
+              "Foutief Medicijn",
               `Je probeert ${selectedMed.name} bij te vullen, maar je scande ${foundProduct.name}.`,
             );
           }, 500);
           return;
         }
 
-        // Controle 2: DEMENTIE BEVEILIGING (Hebben ze dit recent al gedaan?)
+        // Controle 2: DEMENTIE BEVEILIGING (met bevestiging)
         if (
           selectedMed.lastScannedAt &&
           now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
         ) {
-          setTimeout(() => {
-            Alert.alert(
-              "🛑 Al toegevoegd!",
-              "Je hebt dit medicijn vandaag al bijgevuld in de app. Om verwarring te voorkomen, hebben we deze scan geblokkeerd.",
-            );
-          }, 500);
+          Alert.alert(
+            "Medicijn vandaag al gescand",
+            "Dit medicijn werd vandaag al toegevoegd. Heb je echt een tweede doos gescand?",
+            [
+              {
+                text: "Annuleren",
+                style: "cancel",
+              },
+              {
+                text: "Toch toevoegen",
+                onPress: () => updateStockLogic(),
+              },
+            ],
+          );
+
           return;
         }
 
@@ -614,11 +623,28 @@ export default function MedicijnLijstScreen() {
                 fontSize: 60,
                 fontWeight: "bold",
                 color: "white",
-                marginBottom: 30,
               }}
             >
               {selectedMed?.stock}
             </Text>
+
+            {selectedMed?.lastScannedAt && (
+              <Text
+                style={{
+                  color: "#888",
+                  marginBottom: 25,
+                  fontSize: 13,
+                }}
+              >
+                Laatste scan:{" "}
+                {new Date(selectedMed.lastScannedAt).toLocaleString("nl-BE", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  day: "2-digit",
+                  month: "2-digit",
+                })}
+              </Text>
+            )}
 
             <TouchableOpacity
               style={styles.bigScanBtn}
