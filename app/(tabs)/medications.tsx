@@ -46,6 +46,18 @@ const SCAN_COOLDOWN = 2000;
 // Tijdsslot voor jongdementie: 12 uur in milliseconden
 const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 
+// --- GIBBERISH (ONZIN) DETECTOR ---
+const isGibberish = (text: string) => {
+  // 1. Controleer of er helemaal GEEN klinkers in staan (en het woord is langer dan 2 letters)
+  if (text.length > 2 && !/[aeiouy]/i.test(text)) return true;
+  // 2. Controleer op 5 of meer medeklinkers direct achter elkaar (bijv. "fgkjg" uit je screenshot)
+  if (/[bcdfghjklmnpqrstvwxz]{5,}/i.test(text)) return true;
+  // 3. Controleer op 4x dezelfde letter achter elkaar (bijv. "aaaa")
+  if (/(.)\1{3,}/.test(text)) return true;
+
+  return false;
+};
+
 export default function MedicijnLijstScreen() {
   const [meds, setMeds] = useState<Medication[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
@@ -252,18 +264,68 @@ export default function MedicijnLijstScreen() {
 
   // --- SAVING NEW MEDICINE ---
   const handleSaveNew = async () => {
-    if (!newName || !newStock) {
+    const trimmedName = newName.trim();
+    const trimmedDosage = newDosage.trim();
+    const trimmedStock = newStock.trim();
+
+    if (!trimmedName || !trimmedStock) {
       showCustomWarning("Invullen aub", "Naam en voorraad zijn verplicht.");
       return;
     }
 
-    const stockAmount = parseInt(newStock) || 0;
+    // --- BEVEILIGING 1: Naam validatie ---
+    if (trimmedName.length < 3) {
+      showCustomWarning(
+        "Naam te kort",
+        "Voer een geldige en volledige medicijnnaam in (minimaal 3 tekens).",
+      );
+      return;
+    }
+    if (isGibberish(trimmedName)) {
+      showCustomWarning(
+        "Ongeldige naam",
+        "De ingevoerde medicijnnaam lijkt op willekeurige letters. Controleer je invoer.",
+      );
+      return;
+    }
+
+    // --- BEVEILIGING 2: Dosering validatie ---
+    if (
+      trimmedDosage &&
+      trimmedDosage.toLowerCase() !== "n.v.t." &&
+      trimmedDosage.toLowerCase() !== "nvt"
+    ) {
+      if (trimmedDosage.length < 2) {
+        showCustomWarning(
+          "Dosering onduidelijk",
+          "Voer een duidelijke dosering in (bijv. '500mg' of '1 tablet').",
+        );
+        return;
+      }
+      if (!/\d/.test(trimmedDosage)) {
+        // Een geldige dosering bevat vrijwel altijd een getal.
+        showCustomWarning(
+          "Dosering onduidelijk",
+          "Een dosering bevat meestal een cijfer (bijv. '500mg'). Laat leeg of type 'nvt' als er geen is.",
+        );
+        return;
+      }
+      if (isGibberish(trimmedDosage)) {
+        showCustomWarning(
+          "Ongeldige dosering",
+          "De ingevoerde dosering lijkt op willekeurige letters. Controleer je invoer.",
+        );
+        return;
+      }
+    }
+
+    const stockAmount = parseInt(trimmedStock) || 0;
     const now = Date.now();
 
     const existingMed = meds.find(
       (m) =>
-        m.name.toLowerCase() === newName.toLowerCase() &&
-        m.dosage.toLowerCase() === newDosage.toLowerCase(),
+        m.name.toLowerCase() === trimmedName.toLowerCase() &&
+        m.dosage.toLowerCase() === trimmedDosage.toLowerCase(),
     );
 
     let updatedList: Medication[];
@@ -298,8 +360,8 @@ export default function MedicijnLijstScreen() {
     } else {
       const newMedItem: Medication = {
         id: Date.now().toString(),
-        name: newName,
-        dosage: newDosage || "N.v.t.",
+        name: trimmedName,
+        dosage: trimmedDosage || "N.v.t.",
         stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
         isOrdered: false,
         lastScannedAt: now,
@@ -309,7 +371,7 @@ export default function MedicijnLijstScreen() {
 
       showCustomSuccess(
         "Medicijn toegevoegd",
-        `${newName} toegevoegd aan voorraad.`,
+        `${trimmedName} toegevoegd aan voorraad.`,
       );
     }
 
@@ -329,7 +391,6 @@ export default function MedicijnLijstScreen() {
     saveMedications(newList);
     setEditModalVisible(false);
 
-    // Optioneel: toon een succesmelding dat het verwijderd is
     showCustomSuccess("Verwijderd", "Het medicijn is succesvol verwijderd.");
   };
 
@@ -479,7 +540,6 @@ export default function MedicijnLijstScreen() {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             style={{ flex: 1 }}
           >
-            {/* Gekoppelde ref voor automatisch scrollen */}
             <ScrollView
               ref={scrollViewRef}
               contentContainerStyle={{ flexGrow: 1 }}
@@ -551,7 +611,6 @@ export default function MedicijnLijstScreen() {
                     onChangeText={setNewDosage}
                     editable={!isLocked}
                     maxLength={15}
-                    // Bij focus op dit veld: wacht 200ms (voor de keyboard animatie) en scrol dan naar beneden
                     onFocus={() => {
                       setTimeout(() => {
                         scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -578,7 +637,6 @@ export default function MedicijnLijstScreen() {
                     onChangeText={setNewStock}
                     keyboardType="numeric"
                     maxLength={3}
-                    // Bij focus op dit veld: wacht 200ms en scrol dan naar beneden
                     onFocus={() => {
                       setTimeout(() => {
                         scrollViewRef.current?.scrollToEnd({ animated: true });
