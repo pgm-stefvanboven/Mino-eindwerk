@@ -514,6 +514,7 @@ export default function MedicijnLijstScreen() {
                   value={newName}
                   onChangeText={setNewName}
                   editable={!isLocked}
+                  maxLength={40} // <-- LIMIET TOEGEVOEGD
                 />
                 {isLocked && (
                   <Ionicons
@@ -534,6 +535,7 @@ export default function MedicijnLijstScreen() {
                   value={newDosage}
                   onChangeText={setNewDosage}
                   editable={!isLocked}
+                  maxLength={15} // <-- LIMIET TOEGEVOEGD
                 />
                 {isLocked && (
                   <Ionicons
@@ -554,6 +556,7 @@ export default function MedicijnLijstScreen() {
                   value={newStock}
                   onChangeText={setNewStock}
                   keyboardType="numeric"
+                  maxLength={3} // <-- LIMIET TOEGEVOEGD (max 999, afgetopt op 500 in de code)
                 />
               </View>
 
