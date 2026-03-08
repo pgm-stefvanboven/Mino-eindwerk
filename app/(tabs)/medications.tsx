@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   StyleSheet,
   TextInput,
@@ -49,6 +49,9 @@ const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 export default function MedicijnLijstScreen() {
   const [meds, setMeds] = useState<Medication[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
+
+  // Scroll ref toevoegen voor automatisch scrollen
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // Modals state
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -476,8 +479,9 @@ export default function MedicijnLijstScreen() {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             style={{ flex: 1 }}
           >
-            {/* ScrollView toegevoegd zodat je naar de onderste velden kunt scrollen */}
+            {/* Gekoppelde ref voor automatisch scrollen */}
             <ScrollView
+              ref={scrollViewRef}
               contentContainerStyle={{ flexGrow: 1 }}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
@@ -547,6 +551,12 @@ export default function MedicijnLijstScreen() {
                     onChangeText={setNewDosage}
                     editable={!isLocked}
                     maxLength={15}
+                    // Bij focus op dit veld: wacht 200ms (voor de keyboard animatie) en scrol dan naar beneden
+                    onFocus={() => {
+                      setTimeout(() => {
+                        scrollViewRef.current?.scrollToEnd({ animated: true });
+                      }, 200);
+                    }}
                   />
                   {isLocked && (
                     <Ionicons
@@ -568,6 +578,12 @@ export default function MedicijnLijstScreen() {
                     onChangeText={setNewStock}
                     keyboardType="numeric"
                     maxLength={3}
+                    // Bij focus op dit veld: wacht 200ms en scrol dan naar beneden
+                    onFocus={() => {
+                      setTimeout(() => {
+                        scrollViewRef.current?.scrollToEnd({ animated: true });
+                      }, 200);
+                    }}
                   />
                 </View>
 
@@ -953,7 +969,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.1)",
     width: "90%",
   },
-  // AANGEPAST: flex: 1 verwijderd zodat de ScrollView de hoogte goed kan berekenen, en paddingBottom toegevoegd.
   modalContentFullScreen: {
     padding: 20,
     paddingTop: 50,
