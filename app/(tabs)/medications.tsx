@@ -65,6 +65,8 @@ export default function MedicijnLijstScreen() {
   const [confirmData, setConfirmData] = useState({
     title: "",
     msg: "",
+    confirmText: "TOEVOEGEN",
+    isDestructive: false,
     onConfirm: () => {},
   });
 
@@ -115,8 +117,10 @@ export default function MedicijnLijstScreen() {
     title: string,
     msg: string,
     onConfirm: () => void,
+    confirmText: string = "TOEVOEGEN",
+    isDestructive: boolean = false,
   ) => {
-    setConfirmData({ title, msg, onConfirm });
+    setConfirmData({ title, msg, onConfirm, confirmText, isDestructive });
     setConfirmVisible(true);
   };
 
@@ -211,6 +215,8 @@ export default function MedicijnLijstScreen() {
                 setConfirmVisible(false);
                 updateStockLogic();
               },
+              "TOEVOEGEN",
+              false,
             );
           }, 500);
           return;
@@ -318,6 +324,9 @@ export default function MedicijnLijstScreen() {
     setMeds(newList);
     saveMedications(newList);
     setEditModalVisible(false);
+
+    // Optioneel: toon een succesmelding dat het verwijderd is
+    showCustomSuccess("Verwijderd", "Het medicijn is succesvol verwijderd.");
   };
 
   const openEditModal = (med: Medication) => {
@@ -604,7 +613,7 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 2C: CONFIRMATION MESSAGE (ANNULEREN / TOEVOEGEN) --- */}
+      {/* --- MODAL 2C: CONFIRMATION MESSAGE (ANNULEREN / TOEVOEGEN OF VERWIJDEREN) --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -612,14 +621,29 @@ export default function MedicijnLijstScreen() {
         onRequestClose={() => setConfirmVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.warningContent, { borderColor: "#ffaa00" }]}>
+          <View
+            style={[
+              styles.warningContent,
+              {
+                borderColor: confirmData.isDestructive ? "#ef4444" : "#ffaa00",
+              },
+            ]}
+          >
             <View
               style={[
                 styles.warningIcon,
-                { backgroundColor: "rgba(255, 170, 0, 0.15)" },
+                {
+                  backgroundColor: confirmData.isDestructive
+                    ? "rgba(239, 68, 68, 0.15)"
+                    : "rgba(255, 170, 0, 0.15)",
+                },
               ]}
             >
-              <Ionicons name="alert" size={40} color="#ffaa00" />
+              <Ionicons
+                name={confirmData.isDestructive ? "trash" : "alert"}
+                size={40}
+                color={confirmData.isDestructive ? "#ef4444" : "#ffaa00"}
+              />
             </View>
             <Text style={styles.warningTitle}>{confirmData.title}</Text>
             <Text style={styles.warningText}>{confirmData.msg}</Text>
@@ -633,10 +657,23 @@ export default function MedicijnLijstScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.confirmBtn, styles.acceptBtn]}
+                style={[
+                  styles.confirmBtn,
+                  confirmData.isDestructive
+                    ? styles.destructiveBtn
+                    : styles.acceptBtn,
+                ]}
                 onPress={confirmData.onConfirm}
               >
-                <Text style={styles.acceptBtnText}>TOEVOEGEN</Text>
+                <Text
+                  style={
+                    confirmData.isDestructive
+                      ? styles.destructiveBtnText
+                      : styles.acceptBtnText
+                  }
+                >
+                  {confirmData.confirmText}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -773,10 +810,26 @@ export default function MedicijnLijstScreen() {
             )}
 
             <TouchableOpacity
-              onPress={() => selectedMed && deleteMed(selectedMed.id)}
+              onPress={() => {
+                if (selectedMed) {
+                  setEditModalVisible(false); // Sluit eerst het detailsscherm
+                  setTimeout(() => {
+                    showCustomConfirm(
+                      "Medicijn Verwijderen",
+                      `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
+                      () => {
+                        setConfirmVisible(false);
+                        deleteMed(selectedMed.id);
+                      },
+                      "VERWIJDEREN",
+                      true, // isDestructive = true -> Maakt de modal rood
+                    );
+                  }, 400); // Korte vertraging zorgt voor vlotte animatie
+                }
+              }}
               style={{ marginTop: 20, padding: 10 }}
             >
-              <Text style={{ color: "#ff4444", fontWeight: "bold" }}>
+              <Text style={{ color: "#ef4444", fontWeight: "bold" }}>
                 Verwijder medicijn
               </Text>
             </TouchableOpacity>
@@ -1012,6 +1065,16 @@ const styles = StyleSheet.create({
   },
   acceptBtnText: {
     color: "#ffaa00",
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  // Nieuwe knopstijl voor het verwijderen (Rood)
+  destructiveBtn: {
+    backgroundColor: "rgba(239, 68, 68, 0.1)",
+    borderColor: "#ef4444",
+  },
+  destructiveBtnText: {
+    color: "#ef4444",
     fontWeight: "bold",
     fontSize: 14,
   },
