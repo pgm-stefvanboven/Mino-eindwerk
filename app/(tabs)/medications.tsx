@@ -13,6 +13,7 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -475,95 +476,109 @@ export default function MedicijnLijstScreen() {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             style={{ flex: 1 }}
           >
-            <View style={styles.modalContentFullScreen}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Nieuw Medicijn</Text>
-                <TouchableOpacity onPress={() => setAddModalVisible(false)}>
-                  <Ionicons name="close" size={28} color="#888" />
+            {/* ScrollView toegevoegd zodat je naar de onderste velden kunt scrollen */}
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.modalContentFullScreen}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Nieuw Medicijn</Text>
+                  <TouchableOpacity onPress={() => setAddModalVisible(false)}>
+                    <Ionicons name="close" size={28} color="#888" />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.scanSection}
+                  onPress={() => startCamera(false)}
+                >
+                  <View style={styles.scanButton}>
+                    <Ionicons name="barcode-outline" size={22} color="white" />
+                    <Text style={styles.scanButtonText}>SCAN BARCODE</Text>
+                  </View>
+                  <Text style={styles.scanHint}>
+                    of vul de gegevens hieronder handmatig in
+                  </Text>
+                </TouchableOpacity>
+
+                {isLocked && (
+                  <View style={styles.lockedBanner}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={20}
+                      color="#4ade80"
+                    />
+                    <Text style={styles.lockedText}>
+                      Product herkend & geverifieerd
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={styles.label}>NAAM MEDICIJN</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={[styles.input, isLocked && styles.inputLocked]}
+                    placeholder="bv. Paracetamol"
+                    placeholderTextColor="#666"
+                    value={newName}
+                    onChangeText={setNewName}
+                    editable={!isLocked}
+                    maxLength={40}
+                  />
+                  {isLocked && (
+                    <Ionicons
+                      name="lock-closed"
+                      size={18}
+                      color="#666"
+                      style={styles.lockIcon}
+                    />
+                  )}
+                </View>
+
+                <Text style={styles.label}>DOSERING</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={[styles.input, isLocked && styles.inputLocked]}
+                    placeholder="bv. 500mg"
+                    placeholderTextColor="#666"
+                    value={newDosage}
+                    onChangeText={setNewDosage}
+                    editable={!isLocked}
+                    maxLength={15}
+                  />
+                  {isLocked && (
+                    <Ionicons
+                      name="lock-closed"
+                      size={18}
+                      color="#666"
+                      style={styles.lockIcon}
+                    />
+                  )}
+                </View>
+
+                <Text style={styles.label}>AANTAL STUKS / VOORRAAD</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0"
+                    placeholderTextColor="#666"
+                    value={newStock}
+                    onChangeText={setNewStock}
+                    keyboardType="numeric"
+                    maxLength={3}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.saveBtn}
+                  onPress={handleSaveNew}
+                >
+                  <Text style={styles.saveBtnText}>TOEVOEGEN AAN VOORRAAD</Text>
                 </TouchableOpacity>
               </View>
-
-              <TouchableOpacity
-                style={styles.scanSection}
-                onPress={() => startCamera(false)}
-              >
-                <View style={styles.scanButton}>
-                  <Ionicons name="barcode-outline" size={22} color="white" />
-                  <Text style={styles.scanButtonText}>SCAN BARCODE</Text>
-                </View>
-                <Text style={styles.scanHint}>
-                  of vul de gegevens hieronder handmatig in
-                </Text>
-              </TouchableOpacity>
-
-              {isLocked && (
-                <View style={styles.lockedBanner}>
-                  <Ionicons name="checkmark-circle" size={20} color="#4ade80" />
-                  <Text style={styles.lockedText}>
-                    Product herkend & geverifieerd
-                  </Text>
-                </View>
-              )}
-
-              <Text style={styles.label}>NAAM MEDICIJN</Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={[styles.input, isLocked && styles.inputLocked]}
-                  placeholder="bv. Paracetamol"
-                  placeholderTextColor="#666"
-                  value={newName}
-                  onChangeText={setNewName}
-                  editable={!isLocked}
-                  maxLength={40} // <-- LIMIET TOEGEVOEGD
-                />
-                {isLocked && (
-                  <Ionicons
-                    name="lock-closed"
-                    size={18}
-                    color="#666"
-                    style={styles.lockIcon}
-                  />
-                )}
-              </View>
-
-              <Text style={styles.label}>DOSERING</Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={[styles.input, isLocked && styles.inputLocked]}
-                  placeholder="bv. 500mg"
-                  placeholderTextColor="#666"
-                  value={newDosage}
-                  onChangeText={setNewDosage}
-                  editable={!isLocked}
-                  maxLength={15} // <-- LIMIET TOEGEVOEGD
-                />
-                {isLocked && (
-                  <Ionicons
-                    name="lock-closed"
-                    size={18}
-                    color="#666"
-                    style={styles.lockIcon}
-                  />
-                )}
-              </View>
-
-              <Text style={styles.label}>AANTAL STUKS / VOORRAAD</Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0"
-                  placeholderTextColor="#666"
-                  value={newStock}
-                  onChangeText={setNewStock}
-                  keyboardType="numeric"
-                  maxLength={3} // <-- LIMIET TOEGEVOEGD (max 999, afgetopt op 500 in de code)
-                />
-              </View>
-
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveNew}>
-                <Text style={styles.saveBtnText}>TOEVOEGEN AAN VOORRAAD</Text>
-              </TouchableOpacity>
-            </View>
+            </ScrollView>
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
@@ -616,7 +631,7 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 2C: CONFIRMATION MESSAGE (ANNULEREN / TOEVOEGEN OF VERWIJDEREN) --- */}
+      {/* --- MODAL 2C: CONFIRMATION MESSAGE --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -815,7 +830,7 @@ export default function MedicijnLijstScreen() {
             <TouchableOpacity
               onPress={() => {
                 if (selectedMed) {
-                  setEditModalVisible(false); // Sluit eerst het detailsscherm
+                  setEditModalVisible(false);
                   setTimeout(() => {
                     showCustomConfirm(
                       "Medicijn Verwijderen",
@@ -825,9 +840,9 @@ export default function MedicijnLijstScreen() {
                         deleteMed(selectedMed.id);
                       },
                       "VERWIJDEREN",
-                      true, // isDestructive = true -> Maakt de modal rood
+                      true,
                     );
-                  }, 400); // Korte vertraging zorgt voor vlotte animatie
+                  }, 400);
                 }
               }}
               style={{ marginTop: 20, padding: 10 }}
@@ -938,10 +953,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.1)",
     width: "90%",
   },
+  // AANGEPAST: flex: 1 verwijderd zodat de ScrollView de hoogte goed kan berekenen, en paddingBottom toegevoegd.
   modalContentFullScreen: {
-    flex: 1,
     padding: 20,
     paddingTop: 50,
+    paddingBottom: 40,
     backgroundColor: "#09090b",
   },
   modalHeader: {
@@ -1071,7 +1087,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 14,
   },
-  // Nieuwe knopstijl voor het verwijderen (Rood)
   destructiveBtn: {
     backgroundColor: "rgba(239, 68, 68, 0.1)",
     borderColor: "#ef4444",
