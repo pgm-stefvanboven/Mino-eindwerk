@@ -8,7 +8,6 @@
     "scheme": "minoapp",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#09090b",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stefvanboven.minoapp"
@@ -18,12 +17,11 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#09090b"
-      },
-      "edgeToEdgeEnabled": true
+      }
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/icon.png",
+      "favicon": "./assets/images/favicon.svg",
       "description": "Mino: Slimme zorg, gerust gevoel."
     },
     "plugins": [
