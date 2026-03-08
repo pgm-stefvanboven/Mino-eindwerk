@@ -30,8 +30,8 @@ const BARCODE_DB: Record<
   string,
   { name: string; dosage: string; stockToAdd: number }
 > = {
-  "5410123456786": { name: "Dafalgan Forte", dosage: "1g", stockToAdd: 20 }, // Doosje van 20
-  "5410123456799": { name: "Dafalgan Forte", dosage: "1g", stockToAdd: 50 }, // Fictief: doosje van 50
+  "5410123456786": { name: "Dafalgan Forte", dosage: "1g", stockToAdd: 20 },
+  "5410123456799": { name: "Dafalgan Forte", dosage: "1g", stockToAdd: 50 },
   "8714567890128": { name: "Ibuprofen", dosage: "400mg", stockToAdd: 30 },
   "3056789012342": { name: "Metoprolol", dosage: "50mg", stockToAdd: 100 },
 };
@@ -40,7 +40,7 @@ const ROBOT_API = "http://10.81.173.75:5001";
 
 // --- SYSTEM LIMITS ---
 const MAX_STOCK_PER_MED = 500;
-const SCAN_COOLDOWN = 2000; // 2 seconden technische anti-double scan
+const SCAN_COOLDOWN = 2000;
 
 // Tijdsslot voor jongdementie: 12 uur in milliseconden
 const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
@@ -53,8 +53,20 @@ export default function MedicijnLijstScreen() {
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
+
+  // Custom Alerts State
   const [successVisible, setSuccessVisible] = useState(false);
   const [successData, setSuccessData] = useState({ title: "", msg: "" });
+
+  const [warningVisible, setWarningVisible] = useState(false);
+  const [warningData, setWarningData] = useState({ title: "", msg: "" });
+
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [confirmData, setConfirmData] = useState({
+    title: "",
+    msg: "",
+    onConfirm: () => {},
+  });
 
   // Data state
   const [selectedMed, setSelectedMed] = useState<Medication | null>(null);
@@ -88,6 +100,26 @@ export default function MedicijnLijstScreen() {
     }, []),
   );
 
+  // --- CUSTOM ALERT HELPERS ---
+  const showCustomSuccess = (title: string, msg: string) => {
+    setSuccessData({ title, msg });
+    setTimeout(() => setSuccessVisible(true), 500);
+  };
+
+  const showCustomWarning = (title: string, msg: string) => {
+    setWarningData({ title, msg });
+    setWarningVisible(true);
+  };
+
+  const showCustomConfirm = (
+    title: string,
+    msg: string,
+    onConfirm: () => void,
+  ) => {
+    setConfirmData({ title, msg, onConfirm });
+    setConfirmVisible(true);
+  };
+
   // --- CAMERA LOGIC ---
   const startCamera = async (refillMode = false) => {
     if (!permission?.granted) {
@@ -101,7 +133,6 @@ export default function MedicijnLijstScreen() {
   const handleBarcodeScanned = ({ data }: { data: string }) => {
     const now = Date.now();
 
-    // Technische scan cooldown
     if (now - lastScanTime < SCAN_COOLDOWN) {
       return;
     }
@@ -113,14 +144,11 @@ export default function MedicijnLijstScreen() {
 
     if (foundProduct) {
       if (isRefilling && selectedMed) {
-        // SCENARIO 1: BIJVULLEN BESTAAND
-
-        // Controle 1: Scannen ze wel het juiste medicijn?
         if (
           foundProduct.name.toLowerCase() !== selectedMed.name.toLowerCase()
         ) {
           setTimeout(() => {
-            Alert.alert(
+            showCustomWarning(
               "Foutief Medicijn",
               `Je probeert ${selectedMed.name} bij te vullen, maar je scande ${foundProduct.name}.`,
             );
@@ -128,30 +156,6 @@ export default function MedicijnLijstScreen() {
           return;
         }
 
-        // Controle 2: DEMENTIE BEVEILIGING (met bevestiging)
-        if (
-          selectedMed.lastScannedAt &&
-          now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
-        ) {
-          Alert.alert(
-            "Medicijn vandaag al gescand",
-            "Dit medicijn werd vandaag al toegevoegd. Heb je echt een tweede doos gescand?",
-            [
-              {
-                text: "Annuleren",
-                style: "cancel",
-              },
-              {
-                text: "Toch toevoegen",
-                onPress: () => updateStockLogic(),
-              },
-            ],
-          );
-
-          return;
-        }
-
-        // Update stock direct en zet de tijd-blokkade aan
         const updateStockLogic = async () => {
           let updatedItem: Medication | null = null;
 
@@ -163,17 +167,19 @@ export default function MedicijnLijstScreen() {
               );
 
               if (updatedStock === MAX_STOCK_PER_MED) {
-                Alert.alert(
-                  "Voorraad limiet bereikt",
-                  "Maximum voorraad voor dit medicijn bereikt.",
-                );
+                setTimeout(() => {
+                  showCustomWarning(
+                    "Voorraad limiet",
+                    "Maximum voorraad voor dit medicijn bereikt.",
+                  );
+                }, 1000);
               }
 
               updatedItem = {
                 ...m,
                 stock: updatedStock,
                 isOrdered: false,
-                lastScannedAt: now, // <--- Blokkade tijdstip opslaan!
+                lastScannedAt: now,
               };
               return updatedItem;
             }
@@ -192,9 +198,26 @@ export default function MedicijnLijstScreen() {
           );
         };
 
+        // DEMENTIE BEVEILIGING (met bevestiging)
+        if (
+          selectedMed.lastScannedAt &&
+          now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
+        ) {
+          setTimeout(() => {
+            showCustomConfirm(
+              "Medicijn vandaag al gescand",
+              "Dit medicijn werd vandaag al toegevoegd. Heb je echt een tweede doos gescand?",
+              () => {
+                setConfirmVisible(false);
+                updateStockLogic();
+              },
+            );
+          }, 500);
+          return;
+        }
+
         updateStockLogic();
       } else {
-        // SCENARIO 2: NIEUW TOEVOEGEN VIA DE PLUS KNOP
         setNewName(foundProduct.name);
         setNewDosage(foundProduct.dosage);
         setNewStock(foundProduct.stockToAdd.toString());
@@ -209,7 +232,7 @@ export default function MedicijnLijstScreen() {
       }
     } else {
       setTimeout(() => {
-        Alert.alert(
+        showCustomWarning(
           "Onbekend Product",
           `Code ${data} staat niet in het systeem.`,
         );
@@ -220,14 +243,13 @@ export default function MedicijnLijstScreen() {
   // --- SAVING NEW MEDICINE ---
   const handleSaveNew = async () => {
     if (!newName || !newStock) {
-      Alert.alert("Invullen aub", "Naam en voorraad zijn verplicht.");
+      showCustomWarning("Invullen aub", "Naam en voorraad zijn verplicht.");
       return;
     }
 
     const stockAmount = parseInt(newStock) || 0;
     const now = Date.now();
 
-    // --- CHECK OF MEDICIJN AL BESTAAT (Op 1 hoop gooien) ---
     const existingMed = meds.find(
       (m) =>
         m.name.toLowerCase() === newName.toLowerCase() &&
@@ -237,19 +259,17 @@ export default function MedicijnLijstScreen() {
     let updatedList: Medication[];
 
     if (existingMed) {
-      // Dementie Beveiliging ook hier toepassen (voor het geval ze het handmatig toevoegen)
       if (
         existingMed.lastScannedAt &&
         now - existingMed.lastScannedAt < DEMENTIA_TIME_LOCK
       ) {
-        Alert.alert(
-          "🛑 Al toegevoegd!",
-          "Dit medicijn is vandaag al een keer toegevoegd of bijgewerkt.",
+        showCustomWarning(
+          "Al toegevoegd!",
+          "Je hebt dit medicijn vandaag al bijgevuld in de app. Om verwarring te voorkomen, hebben we deze scan geblokkeerd.",
         );
         return;
       }
 
-      // --- VOORRAAD VERHOGEN EN OP DEZELFDE HOOP GOOIEN ---
       const newStockValue = Math.min(
         MAX_STOCK_PER_MED,
         existingMed.stock + stockAmount,
@@ -266,14 +286,13 @@ export default function MedicijnLijstScreen() {
         `${existingMed.name} voorraad verhoogd.`,
       );
     } else {
-      // --- HELEMAAL NIEUW MEDICIJN ---
       const newMedItem: Medication = {
         id: Date.now().toString(),
         name: newName,
         dosage: newDosage || "N.v.t.",
         stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
         isOrdered: false,
-        lastScannedAt: now, // Direct beveiligen tegen dubbelklikken
+        lastScannedAt: now,
       };
 
       updatedList = [...meds, newMedItem];
@@ -292,12 +311,6 @@ export default function MedicijnLijstScreen() {
     setNewDosage("");
     setNewStock("");
     setIsLocked(false);
-  };
-
-  // --- NOTIFICATIONS & UPDATES ---
-  const showCustomSuccess = (title: string, msg: string) => {
-    setSuccessData({ title, msg });
-    setTimeout(() => setSuccessVisible(true), 500);
   };
 
   const deleteMed = (id: string) => {
@@ -429,7 +442,6 @@ export default function MedicijnLijstScreen() {
         }}
       />
 
-      {/* --- FAB (ADD BUTTON) --- */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => {
@@ -544,7 +556,7 @@ export default function MedicijnLijstScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* --- MODAL 2: SUCCESS MESSAGE --- */}
+      {/* --- MODAL 2A: SUCCESS MESSAGE --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -564,6 +576,69 @@ export default function MedicijnLijstScreen() {
             >
               <Text style={styles.successBtnText}>OK</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* --- MODAL 2B: WARNING MESSAGE --- */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={warningVisible}
+        onRequestClose={() => setWarningVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.warningContent}>
+            <View style={styles.warningIcon}>
+              <Ionicons name="hand-right" size={40} color="#ef4444" />
+            </View>
+            <Text style={styles.warningTitle}>{warningData.title}</Text>
+            <Text style={styles.warningText}>{warningData.msg}</Text>
+            <TouchableOpacity
+              style={styles.warningBtn}
+              onPress={() => setWarningVisible(false)}
+            >
+              <Text style={styles.warningBtnText}>BEGREPEN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* --- MODAL 2C: CONFIRMATION MESSAGE (ANNULEREN / TOEVOEGEN) --- */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={confirmVisible}
+        onRequestClose={() => setConfirmVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.warningContent, { borderColor: "#ffaa00" }]}>
+            <View
+              style={[
+                styles.warningIcon,
+                { backgroundColor: "rgba(255, 170, 0, 0.15)" },
+              ]}
+            >
+              <Ionicons name="alert" size={40} color="#ffaa00" />
+            </View>
+            <Text style={styles.warningTitle}>{confirmData.title}</Text>
+            <Text style={styles.warningText}>{confirmData.msg}</Text>
+
+            <View style={styles.confirmBtnRow}>
+              <TouchableOpacity
+                style={[styles.confirmBtn, styles.cancelBtn]}
+                onPress={() => setConfirmVisible(false)}
+              >
+                <Text style={styles.cancelBtnText}>ANNULEREN</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.confirmBtn, styles.acceptBtn]}
+                onPress={confirmData.onConfirm}
+              >
+                <Text style={styles.acceptBtnText}>TOEVOEGEN</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -820,6 +895,8 @@ const styles = StyleSheet.create({
     marginBottom: 25,
   },
   modalTitle: { color: "white", fontSize: 22, fontWeight: "bold" },
+
+  // --- SUCCESS MODAL STYLES ---
   successContent: {
     backgroundColor: "#1c1c1e",
     width: "80%",
@@ -859,6 +936,86 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   successBtnText: { color: "#052e16", fontWeight: "bold", fontSize: 16 },
+
+  // --- WARNING & CONFIRM MODAL STYLES ---
+  warningContent: {
+    backgroundColor: "#1c1c1e",
+    width: "85%",
+    borderRadius: 24,
+    padding: 30,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ef4444",
+  },
+  warningIcon: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: "rgba(239, 68, 68, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  warningTitle: {
+    color: "white",
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  warningText: {
+    color: "#aaa",
+    fontSize: 14,
+    textAlign: "center",
+    marginBottom: 25,
+    lineHeight: 20,
+  },
+  warningBtn: {
+    backgroundColor: "#2c2c2e",
+    borderWidth: 1,
+    borderColor: "#ef4444",
+    paddingVertical: 12,
+    width: "100%",
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  warningBtnText: {
+    color: "#ef4444",
+    fontWeight: "bold",
+    fontSize: 15,
+  },
+  confirmBtnRow: {
+    flexDirection: "row",
+    gap: 10,
+    width: "100%",
+    justifyContent: "space-between",
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1,
+  },
+  cancelBtn: {
+    backgroundColor: "transparent",
+    borderColor: "#666",
+  },
+  cancelBtnText: {
+    color: "#aaa",
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  acceptBtn: {
+    backgroundColor: "rgba(255, 170, 0, 0.1)",
+    borderColor: "#ffaa00",
+  },
+  acceptBtnText: {
+    color: "#ffaa00",
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+
   scanSection: {
     backgroundColor: "#131313",
     padding: 20,
