@@ -2,9 +2,11 @@ import { Tabs, useRouter } from "expo-router";
 import React from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable } from "react-native";
+import { useRole } from "../../context/RoleContext"; // 1. Importeer de context (check je mappenpad!)
 
 export default function TabLayout() {
   const router = useRouter();
+  const { role } = useRole(); // 2. Haal de actieve rol op
 
   return (
     <Tabs
@@ -36,22 +38,30 @@ export default function TabLayout() {
         ),
       }}
     >
-      {/* ... other tabs ... */}
       <Tabs.Screen
         name="index"
         options={{
-          title: "VANDAAG",
+          // Dynamische titel en icoon op basis van de rol
+          title: role === "mantelzorger" ? "OVERZICHT" : "VANDAAG",
           tabBarIcon: ({ color }) => (
-            <Ionicons name="calendar" size={24} color={color} />
+            <Ionicons
+              name={role === "mantelzorger" ? "stats-chart" : "calendar"}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="medications"
         options={{
-          title: "MEDICIJNEN",
+          title: role === "mantelzorger" ? "BEHEER" : "MEDICIJNEN",
           tabBarIcon: ({ color }) => (
-            <Ionicons name="medkit" size={24} color={color} />
+            <Ionicons
+              name={role === "mantelzorger" ? "list" : "medkit"}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -59,6 +69,8 @@ export default function TabLayout() {
         name="robot"
         options={{
           title: "CAMERA",
+          // 3. PRIVACY-BY-DESIGN: Verberg de tab volledig voor de mantelzorger
+          href: role === "mantelzorger" ? null : "/robot",
           tabBarIcon: ({ color }) => (
             <Ionicons name="videocam" size={24} color={color} />
           ),

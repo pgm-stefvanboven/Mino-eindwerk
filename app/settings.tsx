@@ -17,22 +17,26 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getPiBaseUrl, setPiBaseUrl, Pi } from "../services/pi";
+import { useRole } from "../context/RoleContext";
 
 export default function SettingsScreen() {
+  const { role, setRole } = useRole();
+
   const [url, setUrl] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactRelation, setContactRelation] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [demoMode, setDemoMode] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [requireScan, setRequireScan] = useState(true);
 
   // --- CUSTOM MODAL STATE ---
   const [modalVisible, setModalVisible] = useState(false);
   const [modalConfig, setModalConfig] = useState({
     title: "",
     message: "",
-    type: "success", // 'success', 'error', 'warning'
-    onConfirm: null as null | (() => void), // CONFIRM CALLBACK
+    type: "success",
+    onConfirm: null as null | (() => void),
   });
 
   // --- LOADING ---
@@ -43,6 +47,11 @@ export default function SettingsScreen() {
       const savedName = await AsyncStorage.getItem("CONTACT_NAME");
       const savedRelation = await AsyncStorage.getItem("CONTACT_RELATION");
       const savedPhone = await AsyncStorage.getItem("CONTACT_PHONE");
+      const savedScan = await AsyncStorage.getItem("REQUIRE_SCAN");
+
+      if (savedScan !== null) {
+        setRequireScan(savedScan === "true");
+      }
       if (savedName) setContactName(savedName);
       if (savedRelation) setContactRelation(savedRelation);
       if (savedPhone) setContactPhone(savedPhone);
@@ -55,7 +64,7 @@ export default function SettingsScreen() {
     title: string,
     message: string,
     type: "success" | "error" | "warning",
-    onConfirm: (() => void) | null = null
+    onConfirm: (() => void) | null = null,
   ) => {
     setModalConfig({ title, message, type, onConfirm });
     setModalVisible(true);
@@ -71,7 +80,7 @@ export default function SettingsScreen() {
       showModal(
         "Ongeldig Nummer",
         "Een telefoonnummer moet minstens 9 cijfers bevatten.",
-        "error"
+        "error",
       );
       return;
     }
@@ -81,8 +90,13 @@ export default function SettingsScreen() {
     showModal(
       "Opgeslagen",
       "De contactgegevens zijn succesvol bijgewerkt.",
-      "success"
+      "success",
     );
+  };
+
+  const toggleRequireScan = async (value: boolean) => {
+    setRequireScan(value);
+    await AsyncStorage.setItem("REQUIRE_SCAN", value.toString());
   };
 
   const testConnection = async () => {
@@ -95,7 +109,7 @@ export default function SettingsScreen() {
       showModal(
         "Verbinding Mislukt",
         "Kan geen verbinding maken. Check IP en WiFi.",
-        "error"
+        "error",
       );
     } finally {
       setLoading(false);
@@ -110,15 +124,14 @@ export default function SettingsScreen() {
       async () => {
         await AsyncStorage.clear();
         setModalVisible(false);
-        // Short delay for UX
         setTimeout(() => {
           showModal(
             "Gereset",
             "De app is terug naar fabrieksinstellingen.",
-            "success"
+            "success",
           );
         }, 300);
-      }
+      },
     );
   };
 
@@ -127,6 +140,97 @@ export default function SettingsScreen() {
       <StatusBar barStyle="light-content" />
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* --- ACCOUNT SWITCHER (SIMILAR TO INSTAGRAM STYLE) --- */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>ACCOUNT WISSELEN (DEMO)</Text>
+          <View style={styles.card}>
+            {/* Gebruiker Account Row */}
+            <TouchableOpacity
+              style={styles.accountRow}
+              onPress={() => setRole("patient")}
+            >
+              <View
+                style={[
+                  styles.avatarCircle,
+                  { backgroundColor: role === "patient" ? "#3b82f6" : "#333" },
+                ]}
+              >
+                <Text style={styles.avatarText}>G</Text>
+              </View>
+              <Text
+                style={[
+                  styles.accountName,
+                  role === "patient" && { fontWeight: "bold", color: "white" },
+                ]}
+              >
+                Gebruiker (Patiënt)
+              </Text>
+              {role === "patient" && (
+                <Ionicons name="checkmark-circle" size={24} color="#3b82f6" />
+              )}
+            </TouchableOpacity>
+
+            {/* Mantelzorger Account Row */}
+            <TouchableOpacity
+              style={[styles.accountRow, { borderBottomWidth: 0 }]}
+              onPress={() => setRole("mantelzorger")}
+            >
+              <View
+                style={[
+                  styles.avatarCircle,
+                  {
+                    backgroundColor:
+                      role === "mantelzorger" ? "#10b981" : "#333",
+                  },
+                ]}
+              >
+                <Text style={styles.avatarText}>M</Text>
+              </View>
+              <Text
+                style={[
+                  styles.accountName,
+                  role === "mantelzorger" && {
+                    fontWeight: "bold",
+                    color: "white",
+                  },
+                ]}
+              >
+                Mantelzorger
+              </Text>
+              {role === "mantelzorger" && (
+                <Ionicons name="checkmark-circle" size={24} color="#10b981" />
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* --- EXTRA SECTIE: ALLEEN VOOR MANTELZORGER --- */}
+        {role === "mantelzorger" && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>ADAPTIEVE ZORG (PATIËNT)</Text>
+            <View style={styles.card}>
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.switchTitle}>
+                    Zelfstandig Voorraad Beheer
+                  </Text>
+                  <Text style={styles.switchSub}>
+                    De patiënt kan barcodes scannen en zo nieuwe doosjes
+                    medicatie toevoegen of de stock bijwerken. Zet dit uit bij
+                    vergevorderde dementie.
+                  </Text>
+                </View>
+                <Switch
+                  value={requireScan}
+                  onValueChange={toggleRequireScan}
+                  trackColor={{ false: "#333", true: "#10b981" }}
+                  thumbColor={"white"}
+                />
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* SECTION 1: ROBOT */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ROBOT CONNECTIVITEIT</Text>
@@ -157,57 +261,59 @@ export default function SettingsScreen() {
         </View>
 
         {/* SECTION 2: CONTACT */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>MANTELZORGER CONTACT</Text>
-          <View style={styles.card}>
-            <Text style={styles.label}>Naam</Text>
-            <View style={styles.inputRow}>
-              <Ionicons name="person-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                value={contactName}
-                onChangeText={setContactName}
-                placeholder="bv. Sofie"
-                placeholderTextColor="#444"
-              />
-            </View>
+        {role === "mantelzorger" && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>MANTELZORGER CONTACT</Text>
+            <View style={styles.card}>
+              <Text style={styles.label}>Naam</Text>
+              <View style={styles.inputRow}>
+                <Ionicons name="person-outline" size={20} color="#666" />
+                <TextInput
+                  style={styles.input}
+                  value={contactName}
+                  onChangeText={setContactName}
+                  placeholder="bv. Sofie"
+                  placeholderTextColor="#444"
+                />
+              </View>
 
-            <Text style={styles.label}>Relatie</Text>
-            <View style={styles.inputRow}>
-              <Ionicons name="heart-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                value={contactRelation}
-                onChangeText={setContactRelation}
-                placeholder="bv. Dochter"
-                placeholderTextColor="#444"
-              />
-            </View>
+              <Text style={styles.label}>Relatie</Text>
+              <View style={styles.inputRow}>
+                <Ionicons name="heart-outline" size={20} color="#666" />
+                <TextInput
+                  style={styles.input}
+                  value={contactRelation}
+                  onChangeText={setContactRelation}
+                  placeholder="bv. Dochter"
+                  placeholderTextColor="#444"
+                />
+              </View>
 
-            <Text style={styles.label}>Telefoonnummer</Text>
-            <View style={styles.inputRow}>
-              <Ionicons name="call-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                value={contactPhone}
-                onChangeText={handlePhoneChange}
-                placeholder="0475123456"
-                placeholderTextColor="#444"
-                keyboardType="number-pad"
-                maxLength={10}
-              />
-            </View>
+              <Text style={styles.label}>Telefoonnummer</Text>
+              <View style={styles.inputRow}>
+                <Ionicons name="call-outline" size={20} color="#666" />
+                <TextInput
+                  style={styles.input}
+                  value={contactPhone}
+                  onChangeText={handlePhoneChange}
+                  placeholder="0475123456"
+                  placeholderTextColor="#444"
+                  keyboardType="number-pad"
+                  maxLength={10}
+                />
+              </View>
 
-            <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: "#333" }]}
-              onPress={saveContact}
-            >
-              <Text style={styles.actionBtnText}>OPSLAAN</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#333" }]}
+                onPress={saveContact}
+              >
+                <Text style={styles.actionBtnText}>OPSLAAN</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        )}
 
-        {/* SECTION 3: DEMO */}
+        {/* SECTION 3: DEMO INSTELLINGEN */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>SYSTEEM & DEMO</Text>
           <View style={styles.card}>
@@ -225,11 +331,19 @@ export default function SettingsScreen() {
                 thumbColor={"white"}
               />
             </View>
-            <View style={styles.divider} />
-            <TouchableOpacity style={styles.dangerBtn} onPress={confirmReset}>
-              <Ionicons name="trash-outline" size={20} color="#ff4444" />
-              <Text style={styles.dangerBtnText}>RESET ALLE DATA</Text>
-            </TouchableOpacity>
+
+            {role === "mantelzorger" && (
+              <>
+                <View style={styles.divider} />
+                <TouchableOpacity
+                  style={styles.dangerBtn}
+                  onPress={confirmReset}
+                >
+                  <Ionicons name="trash-outline" size={20} color="#ff4444" />
+                  <Text style={styles.dangerBtnText}>RESET ALLE DATA</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
 
@@ -247,6 +361,7 @@ export default function SettingsScreen() {
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}
       >
+        {/* ... Modal content blijft exact hetzelfde ... */}
         <View style={styles.modalOverlay}>
           <View
             style={[
@@ -256,8 +371,8 @@ export default function SettingsScreen() {
                   modalConfig.type === "error"
                     ? "#ff4444"
                     : modalConfig.type === "warning"
-                    ? "#ffaa00"
-                    : "#4ade80",
+                      ? "#ffaa00"
+                      : "#4ade80",
               },
             ]}
           >
@@ -269,8 +384,8 @@ export default function SettingsScreen() {
                     modalConfig.type === "error"
                       ? "#ff4444"
                       : modalConfig.type === "warning"
-                      ? "#ffaa00"
-                      : "#4ade80",
+                        ? "#ffaa00"
+                        : "#4ade80",
                 },
               ]}
             >
@@ -279,8 +394,8 @@ export default function SettingsScreen() {
                   modalConfig.type === "error"
                     ? "close"
                     : modalConfig.type === "warning"
-                    ? "warning"
-                    : "checkmark"
+                      ? "warning"
+                      : "checkmark"
                 }
                 size={40}
                 color="white"
@@ -363,6 +478,35 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
   },
   card: { backgroundColor: "#1c1c1e", borderRadius: 12, padding: 16 },
+
+  // --- NIEUWE STYLES VOOR DE ACCOUNT SWITCHER ---
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+  },
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+  avatarText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  accountName: {
+    flex: 1,
+    color: "#a1a1aa",
+    fontSize: 16,
+  },
+  // ----------------------------------------------
+
   inputRow: {
     flexDirection: "row",
     alignItems: "center",

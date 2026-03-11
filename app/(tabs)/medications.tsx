@@ -25,6 +25,7 @@ import {
   getMedications,
   saveMedications,
 } from "../../data/medications";
+import { useRole } from "../../context/RoleContext"; // 1. Haal de rol op
 
 // --- DATABASE VOOR BARCODES ---
 const BARCODE_DB: Record<
@@ -42,28 +43,23 @@ const ROBOT_API = "http://10.81.173.75:5001";
 // --- SYSTEM LIMITS ---
 const MAX_STOCK_PER_MED = 500;
 const SCAN_COOLDOWN = 2000;
-
-// Tijdsslot voor jongdementie: 12 uur in milliseconden
 const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 
-// --- GIBBERISH (ONZIN) DETECTOR ---
 const isGibberish = (text: string) => {
-  // 1. Controleer of er helemaal GEEN klinkers in staan (en het woord is langer dan 2 letters)
   if (text.length > 2 && !/[aeiouy]/i.test(text)) return true;
-  // 2. Controleer op 5 of meer medeklinkers direct achter elkaar (bijv. "fgkjg" uit je screenshot)
   if (/[bcdfghjklmnpqrstvwxz]{5,}/i.test(text)) return true;
-  // 3. Controleer op 4x dezelfde letter achter elkaar (bijv. "aaaa")
   if (/(.)\1{3,}/.test(text)) return true;
-
   return false;
 };
 
 export default function MedicijnLijstScreen() {
+  const { role } = useRole(); // Haal de huidige rol op (patient of mantelzorger)
   const [meds, setMeds] = useState<Medication[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
-
-  // Scroll ref toevoegen voor automatisch scrollen
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // --- ADAPTIEVE ZORG STATE ---
+  const [allowPatientScan, setAllowPatientScan] = useState(true);
 
   // Modals state
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -73,10 +69,8 @@ export default function MedicijnLijstScreen() {
   // Custom Alerts State
   const [successVisible, setSuccessVisible] = useState(false);
   const [successData, setSuccessData] = useState({ title: "", msg: "" });
-
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningData, setWarningData] = useState({ title: "", msg: "" });
-
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [confirmData, setConfirmData] = useState({
     title: "",
@@ -103,20 +97,29 @@ export default function MedicijnLijstScreen() {
   const [caregiverName, setCaregiverName] = useState("Familie");
   const [caregiverRelation, setCaregiverRelation] = useState("");
 
-  // Update data every time the screen opens
   useFocusEffect(
     useCallback(() => {
       getMedications().then(setMeds);
 
-      const loadContact = async () => {
+      const loadSettings = async () => {
         const name = await AsyncStorage.getItem("CONTACT_NAME");
         const relation = await AsyncStorage.getItem("CONTACT_RELATION");
         if (name) setCaregiverName(name);
         if (relation) setCaregiverRelation(relation);
+
+        // Lees uit of de patiënt nog mag scannen
+        const savedScan = await AsyncStorage.getItem("REQUIRE_SCAN");
+        if (savedScan !== null) {
+          setAllowPatientScan(savedScan === "true");
+        }
       };
-      loadContact();
+      loadSettings();
     }, []),
   );
+
+  // Bepaal of de scan-knoppen zichtbaar mogen zijn
+  // De mantelzorger mag altijd scannen. De patiënt alleen als de instelling 'true' is.
+  const canScan = role === "mantelzorger" || allowPatientScan;
 
   // --- CUSTOM ALERT HELPERS ---
   const showCustomSuccess = (title: string, msg: string) => {
@@ -152,10 +155,7 @@ export default function MedicijnLijstScreen() {
 
   const handleBarcodeScanned = ({ data }: { data: string }) => {
     const now = Date.now();
-
-    if (now - lastScanTime < SCAN_COOLDOWN) {
-      return;
-    }
+    if (now - lastScanTime < SCAN_COOLDOWN) return;
 
     setLastScanTime(now);
     setCameraVisible(false);
@@ -178,14 +178,12 @@ export default function MedicijnLijstScreen() {
 
         const updateStockLogic = async () => {
           let updatedItem: Medication | null = null;
-
           const updatedList = meds.map((m) => {
             if (m.id === selectedMed.id) {
               const updatedStock = Math.min(
                 MAX_STOCK_PER_MED,
                 m.stock + foundProduct.stockToAdd,
               );
-
               if (updatedStock === MAX_STOCK_PER_MED) {
                 setTimeout(() => {
                   showCustomWarning(
@@ -194,7 +192,6 @@ export default function MedicijnLijstScreen() {
                   );
                 }, 1000);
               }
-
               updatedItem = {
                 ...m,
                 stock: updatedStock,
@@ -206,19 +203,15 @@ export default function MedicijnLijstScreen() {
             return m;
           });
 
-          if (updatedItem) {
-            setSelectedMed(updatedItem);
-          }
+          if (updatedItem) setSelectedMed(updatedItem);
           setMeds(updatedList);
           await saveMedications(updatedList);
-
           showCustomSuccess(
             "Gelukt!",
             `Voorraad verhoogd met ${foundProduct.stockToAdd} stuks.`,
           );
         };
 
-        // DEMENTIE BEVEILIGING (met bevestiging)
         if (
           selectedMed.lastScannedAt &&
           now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
@@ -237,16 +230,13 @@ export default function MedicijnLijstScreen() {
           }, 500);
           return;
         }
-
         updateStockLogic();
       } else {
         setNewName(foundProduct.name);
         setNewDosage(foundProduct.dosage);
         setNewStock(foundProduct.stockToAdd.toString());
         setIsLocked(true);
-
         setAddModalVisible(true);
-
         showCustomSuccess(
           "Product Herkend",
           `Doosje met ${foundProduct.stockToAdd} stuks gevonden.`,
@@ -273,23 +263,21 @@ export default function MedicijnLijstScreen() {
       return;
     }
 
-    // --- BEVEILIGING 1: Naam validatie ---
     if (trimmedName.length < 3) {
       showCustomWarning(
         "Naam te kort",
-        "Voer een geldige en volledige medicijnnaam in (minimaal 3 tekens).",
+        "Voer een geldige en volledige medicijnnaam in.",
       );
       return;
     }
     if (isGibberish(trimmedName)) {
       showCustomWarning(
         "Ongeldige naam",
-        "De ingevoerde medicijnnaam lijkt op willekeurige letters. Controleer je invoer.",
+        "De ingevoerde medicijnnaam lijkt op willekeurige letters.",
       );
       return;
     }
 
-    // --- BEVEILIGING 2: Dosering validatie ---
     if (
       trimmedDosage &&
       trimmedDosage.toLowerCase() !== "n.v.t." &&
@@ -298,22 +286,21 @@ export default function MedicijnLijstScreen() {
       if (trimmedDosage.length < 2) {
         showCustomWarning(
           "Dosering onduidelijk",
-          "Voer een duidelijke dosering in (bijv. '500mg' of '1 tablet').",
+          "Voer een duidelijke dosering in.",
         );
         return;
       }
       if (!/\d/.test(trimmedDosage)) {
-        // Een geldige dosering bevat vrijwel altijd een getal.
         showCustomWarning(
           "Dosering onduidelijk",
-          "Een dosering bevat meestal een cijfer (bijv. '500mg'). Laat leeg of type 'nvt' als er geen is.",
+          "Een dosering bevat meestal een cijfer.",
         );
         return;
       }
       if (isGibberish(trimmedDosage)) {
         showCustomWarning(
           "Ongeldige dosering",
-          "De ingevoerde dosering lijkt op willekeurige letters. Controleer je invoer.",
+          "De ingevoerde dosering lijkt op willekeurige letters.",
         );
         return;
       }
@@ -337,7 +324,7 @@ export default function MedicijnLijstScreen() {
       ) {
         showCustomWarning(
           "Al toegevoegd!",
-          "Je hebt dit medicijn vandaag al bijgevuld in de app. Om verwarring te voorkomen, hebben we deze scan geblokkeerd.",
+          "Je hebt dit medicijn vandaag al bijgevuld in de app.",
         );
         return;
       }
@@ -368,7 +355,6 @@ export default function MedicijnLijstScreen() {
       };
 
       updatedList = [...meds, newMedItem];
-
       showCustomSuccess(
         "Medicijn toegevoegd",
         `${trimmedName} toegevoegd aan voorraad.`,
@@ -390,7 +376,6 @@ export default function MedicijnLijstScreen() {
     setMeds(newList);
     saveMedications(newList);
     setEditModalVisible(false);
-
     showCustomSuccess("Verwijderd", "Het medicijn is succesvol verwijderd.");
   };
 
@@ -409,9 +394,7 @@ export default function MedicijnLijstScreen() {
 
     if (selectedMed) {
       const updatedList = meds.map((m) => {
-        if (m.id === selectedMed.id) {
-          return { ...m, isOrdered: true };
-        }
+        if (m.id === selectedMed.id) return { ...m, isOrdered: true };
         return m;
       });
       setMeds(updatedList);
@@ -516,18 +499,21 @@ export default function MedicijnLijstScreen() {
         }}
       />
 
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => {
-          setNewName("");
-          setNewDosage("");
-          setNewStock("");
-          setIsLocked(false);
-          setAddModalVisible(true);
-        }}
-      >
-        <Ionicons name="barcode-outline" size={30} color="white" />
-      </TouchableOpacity>
+      {/* VERBERG DE FAB ALS DE PATIËNT NIET MAG SCANNEN */}
+      {canScan && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => {
+            setNewName("");
+            setNewDosage("");
+            setNewStock("");
+            setIsLocked(false);
+            setAddModalVisible(true);
+          }}
+        >
+          <Ionicons name="barcode-outline" size={30} color="white" />
+        </TouchableOpacity>
+      )}
 
       {/* --- MODAL 1: ADD NEW MEDICINE --- */}
       <Modal
@@ -612,9 +598,13 @@ export default function MedicijnLijstScreen() {
                     editable={!isLocked}
                     maxLength={15}
                     onFocus={() => {
-                      setTimeout(() => {
-                        scrollViewRef.current?.scrollToEnd({ animated: true });
-                      }, 200);
+                      setTimeout(
+                        () =>
+                          scrollViewRef.current?.scrollToEnd({
+                            animated: true,
+                          }),
+                        200,
+                      );
                     }}
                   />
                   {isLocked && (
@@ -638,9 +628,13 @@ export default function MedicijnLijstScreen() {
                     keyboardType="numeric"
                     maxLength={3}
                     onFocus={() => {
-                      setTimeout(() => {
-                        scrollViewRef.current?.scrollToEnd({ animated: true });
-                      }, 200);
+                      setTimeout(
+                        () =>
+                          scrollViewRef.current?.scrollToEnd({
+                            animated: true,
+                          }),
+                        200,
+                      );
                     }}
                   />
                 </View>
@@ -657,7 +651,7 @@ export default function MedicijnLijstScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* --- MODAL 2A: SUCCESS MESSAGE --- */}
+      {/* --- MODAL 2A, 2B, 2C blijven ongewijzigd in de code hieronder voor beknoptheid --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -681,7 +675,6 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 2B: WARNING MESSAGE --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -705,7 +698,6 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 2C: CONFIRMATION MESSAGE --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -739,7 +731,6 @@ export default function MedicijnLijstScreen() {
             </View>
             <Text style={styles.warningTitle}>{confirmData.title}</Text>
             <Text style={styles.warningText}>{confirmData.msg}</Text>
-
             <View style={styles.confirmBtnRow}>
               <TouchableOpacity
                 style={[styles.confirmBtn, styles.cancelBtn]}
@@ -747,7 +738,6 @@ export default function MedicijnLijstScreen() {
               >
                 <Text style={styles.cancelBtnText}>ANNULEREN</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={[
                   styles.confirmBtn,
@@ -822,24 +812,12 @@ export default function MedicijnLijstScreen() {
             </Text>
 
             <Text style={styles.label}>HUIDIGE VOORRAAD</Text>
-            <Text
-              style={{
-                fontSize: 60,
-                fontWeight: "bold",
-                color: "white",
-              }}
-            >
+            <Text style={{ fontSize: 60, fontWeight: "bold", color: "white" }}>
               {selectedMed?.stock}
             </Text>
 
             {selectedMed?.lastScannedAt && (
-              <Text
-                style={{
-                  color: "#888",
-                  marginBottom: 25,
-                  fontSize: 13,
-                }}
-              >
+              <Text style={{ color: "#888", marginBottom: 25, fontSize: 13 }}>
                 Laatste scan:{" "}
                 {new Date(selectedMed.lastScannedAt).toLocaleString("nl-BE", {
                   hour: "2-digit",
@@ -850,19 +828,29 @@ export default function MedicijnLijstScreen() {
               </Text>
             )}
 
-            <TouchableOpacity
-              style={styles.bigScanBtn}
-              onPress={() => {
-                setEditModalVisible(false);
-                setTimeout(() => startCamera(true), 500);
-              }}
-            >
-              <Ionicons name="scan-circle" size={40} color="white" />
-              <View>
-                <Text style={styles.bigScanTitle}>SCAN NIEUWE DOOS</Text>
-                <Text style={styles.bigScanSub}>Automatisch bijvullen</Text>
+            {/* VERBERG DE REFEL KNOP ALS DE PATIËNT NIET MAG SCANNEN */}
+            {canScan ? (
+              <TouchableOpacity
+                style={styles.bigScanBtn}
+                onPress={() => {
+                  setEditModalVisible(false);
+                  setTimeout(() => startCamera(true), 500);
+                }}
+              >
+                <Ionicons name="scan-circle" size={40} color="white" />
+                <View>
+                  <Text style={styles.bigScanTitle}>SCAN NIEUWE DOOS</Text>
+                  <Text style={styles.bigScanSub}>Automatisch bijvullen</Text>
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.lockedRefillBanner}>
+                <Ionicons name="shield-checkmark" size={20} color="#00f0ff" />
+                <Text style={styles.lockedRefillText}>
+                  Voorraad wordt beheerd door uw mantelzorger
+                </Text>
               </View>
-            </TouchableOpacity>
+            )}
 
             {selectedMed && selectedMed.stock < 10 && (
               <TouchableOpacity
@@ -890,41 +878,39 @@ export default function MedicijnLijstScreen() {
                     <Text style={styles.notifyBtnText}>
                       {selectedMed.isOrdered
                         ? "REEDS GEMELD AAN FAMILIE"
-                        : `VRAAG AAN ${caregiverName.toUpperCase()} ${
-                            caregiverRelation
-                              ? `(${caregiverRelation.toUpperCase()})`
-                              : ""
-                          }`}
+                        : `VRAAG AAN ${caregiverName.toUpperCase()} ${caregiverRelation ? `(${caregiverRelation.toUpperCase()})` : ""}`}
                     </Text>
                   </>
                 )}
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              onPress={() => {
-                if (selectedMed) {
-                  setEditModalVisible(false);
-                  setTimeout(() => {
-                    showCustomConfirm(
-                      "Medicijn Verwijderen",
-                      `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
-                      () => {
-                        setConfirmVisible(false);
-                        deleteMed(selectedMed.id);
-                      },
-                      "VERWIJDEREN",
-                      true,
-                    );
-                  }, 400);
-                }
-              }}
-              style={{ marginTop: 20, padding: 10 }}
-            >
-              <Text style={{ color: "#ef4444", fontWeight: "bold" }}>
-                Verwijder medicijn
-              </Text>
-            </TouchableOpacity>
+            {role === "mantelzorger" && (
+              <TouchableOpacity
+                onPress={() => {
+                  if (selectedMed) {
+                    setEditModalVisible(false);
+                    setTimeout(() => {
+                      showCustomConfirm(
+                        "Medicijn Verwijderen",
+                        `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
+                        () => {
+                          setConfirmVisible(false);
+                          deleteMed(selectedMed.id);
+                        },
+                        "VERWIJDEREN",
+                        true,
+                      );
+                    }, 400);
+                  }
+                }}
+                style={{ marginTop: 20, padding: 10 }}
+              >
+                <Text style={{ color: "#ef4444", fontWeight: "bold" }}>
+                  Verwijder medicijn
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               onPress={() => setEditModalVisible(false)}
@@ -1041,7 +1027,24 @@ const styles = StyleSheet.create({
   },
   modalTitle: { color: "white", fontSize: 22, fontWeight: "bold" },
 
-  // --- SUCCESS MODAL STYLES ---
+  lockedRefillBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 240, 255, 0.1)",
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(0, 240, 255, 0.3)",
+    width: "100%",
+    justifyContent: "center",
+  },
+  lockedRefillText: {
+    color: "#00f0ff",
+    fontSize: 12,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+
   successContent: {
     backgroundColor: "#1c1c1e",
     width: "80%",
@@ -1081,8 +1084,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   successBtnText: { color: "#052e16", fontWeight: "bold", fontSize: 16 },
-
-  // --- WARNING & CONFIRM MODAL STYLES ---
   warningContent: {
     backgroundColor: "#1c1c1e",
     width: "85%",
@@ -1124,11 +1125,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
   },
-  warningBtnText: {
-    color: "#ef4444",
-    fontWeight: "bold",
-    fontSize: 15,
-  },
+  warningBtnText: { color: "#ef4444", fontWeight: "bold", fontSize: 15 },
   confirmBtnRow: {
     flexDirection: "row",
     gap: 10,
@@ -1142,34 +1139,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
   },
-  cancelBtn: {
-    backgroundColor: "transparent",
-    borderColor: "#666",
-  },
-  cancelBtnText: {
-    color: "#aaa",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
+  cancelBtn: { backgroundColor: "transparent", borderColor: "#666" },
+  cancelBtnText: { color: "#aaa", fontWeight: "bold", fontSize: 14 },
   acceptBtn: {
     backgroundColor: "rgba(255, 170, 0, 0.1)",
     borderColor: "#ffaa00",
   },
-  acceptBtnText: {
-    color: "#ffaa00",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
+  acceptBtnText: { color: "#ffaa00", fontWeight: "bold", fontSize: 14 },
   destructiveBtn: {
     backgroundColor: "rgba(239, 68, 68, 0.1)",
     borderColor: "#ef4444",
   },
-  destructiveBtnText: {
-    color: "#ef4444",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-
+  destructiveBtnText: { color: "#ef4444", fontWeight: "bold", fontSize: 14 },
   scanSection: {
     backgroundColor: "#131313",
     padding: 20,
@@ -1320,6 +1301,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.6)",
     padding: 10,
     borderRadius: 8,
+    textAlign: "center",
   },
   closeCameraBtn: {
     position: "absolute",
