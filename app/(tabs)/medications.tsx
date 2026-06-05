@@ -38,7 +38,7 @@ const BARCODE_DB: Record<
   "3056789012342": { name: "Metoprolol", dosage: "50mg", stockToAdd: 100 },
 };
 
-const ROBOT_API = "http://10.81.173.75:5001";
+const ROBOT_API = "http://10.150.115.75:5001";
 
 // --- SYSTEM LIMITS ---
 const MAX_STOCK_PER_MED = 500;

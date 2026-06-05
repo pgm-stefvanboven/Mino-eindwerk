@@ -17,8 +17,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ScreenOrientation from "expo-screen-orientation";
 import * as NavigationBar from "expo-navigation-bar";
 
-const VIDEO_IP = "http://10.100.170.75:5001";
-const COMMAND_IP = "http://10.100.170.75:5002";
+const VIDEO_IP = "http://10.150.115.75:5001";
+const COMMAND_IP = "http://10.150.115.75:5002";
 
 // --- THEMA ---
 const THEME = {
