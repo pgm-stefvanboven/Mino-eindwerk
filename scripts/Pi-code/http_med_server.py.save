@@ -1,0 +1,162 @@
+from flask import Flask, jsonify, Response, send_file
+from flask_cors import CORS
+import socket
+import time
+import threading
+import io
+
+from picamera2 import Picamera2
+import cv2
+
+app = Flask(__name__)
+CORS(app)
+
+# ----------------------------
+# INSTELLINGEN
+# ----------------------------
+ROBOT_IP = "127.0.0.1"
+CMD_PORT = 5000
+HTTP_PORT = 5001
+
+VIDEO_SIZE = (640, 480)   # als nodig: (480, 360)
+VIDEO_FPS = 12            # stabieler dan 15
+JPEG_QUALITY = 70         # als nodig: 60
+
+# ----------------------------
+# COMMAND BRIDGE
+# ----------------------------
+def send_cmd(command: str) -> bool:
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.settimeout(2)
+        client.connect((ROBOT_IP, CMD_PORT))
+        client.sendall((command + "\n").encode("utf-8"))
+        client.close()
+        print(f"Gestuurd: {command}")
+        return True
+    except Exception as e:
+        print(f"Fout bij sturen commando '{command}': {e}")
+        return False
+
+# ----------------------------
+# CAMERA THREAD: latest JPEG
+# ----------------------------
+latest_frame = None
+latest_ts = 0.0
+frame_lock = threading.Lock()
+
+def camera_loop():
+    global latest_frame, latest_ts
+
+    picam2 = Picamera2()
+
+    # Laat Pi 5 kiezen (vaak XBGR8888). Wij detecteren kanalen automatisch.
+    config = picam2.create_video_configuration(
+        main={"size": VIDEO_SIZE},
+        controls={"FrameRate": float(VIDEO_FPS)}
+    )
+    picam2.configure(config)
+    picam2.start()
+
+    # warm-up voor exposure/awb
+    time.sleep(1.0)
+
+    interval = 1.0 / max(1, int(VIDEO_FPS))
+    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(JPEG_QUALITY)]
+
+    print(f"Camera gestart: size={VIDEO_SIZE}, fps={VIDEO_FPS}, jpeg_quality={JPEG_QUALITY}")
+
+    while True:
+        t0 = time.time()
+        try:
+            
+
+            jpg_bytes = jpg.tobytes()
+            with frame_lock:
+                latest_frame = jpg_bytes
+                latest_ts = time.time()
+
+        except Exception as e:
+            print(f"Camera loop fout: {e}")
+            time.sleep(0.5)
+
+        # houd FPS stabiel zonder backlog
+        dt = time.time() - t0
+        sleep_time = interval - dt
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+threading.Thread(target=camera_loop, daemon=True).start()
+
+def mjpeg_stream():
+    while True:
+        with frame_lock:
+            frame = latest_frame
+
+        if frame is None:
+            time.sleep(0.05)
+            continue
+
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n"
+            b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n" +
+            frame + b"\r\n"
+        )
+
+# ----------------------------
+# ROUTES
+# ----------------------------
+@app.get("/health")
+def health():
+    age = time.time() - latest_ts if latest_ts else None
+    return jsonify({
+        "ok": True,
+        "video_frame_age_sec": age,
+        "video_size": list(VIDEO_SIZE),
+        "video_fps": VIDEO_FPS,
+        "jpeg_quality": JPEG_QUALITY
+    })
+
+@app.get("/video_feed")
+def video_feed():
+    return Response(
+        mjpeg_stream(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+@app.get("/snapshot.jpg")
+def snapshot():
+    # handig om te testen of de jpeg echt correct is
+    with frame_lock:
+        frame = latest_frame
+    if frame is None:
+        return ("No frame yet", 503)
+    return Response(frame, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
+# ----------------------------
+# Medicatie API
+# ----------------------------
+medication_data = [
+    {"id": 1, "time": "08:00", "name": "Paracetamol", "taken": False},
+    {"id": 2, "time": "12:00", "name": "Bloeddrukpil", "taken": False},
+]
+
+@app.get("/medicijnen")
+def get_meds():
+    return jsonify(medication_data)
+
+@app.post("/medicijnen/<int:id>/bevestig")
+def confirm_med(id):
+    send_cmd("CMD_BUZZER#1")
+    time.sleep(0.5)
+    send_cmd("CMD_BUZZER#0")
+    return jsonify({"status": "success", "buzzer": "beep", "id": id})
+
+if __name__ == "__main__":
+    print("HTTP Medicatie Bridge draait op poort 5001...")
+    app.run(host="0.0.0.0", port=HTTP_PORT, debug=False, threaded=True, use_reloader=False)
