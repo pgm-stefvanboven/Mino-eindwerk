@@ -42,6 +42,7 @@ export default function VandaagScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lowStockMeds, setLowStockMeds] = useState<Medication[]>([]);
+  const [takingMedication, setTakingMedication] = useState<number | null>(null);
 
   // Update clock every second
   useEffect(() => {
@@ -124,7 +125,7 @@ export default function VandaagScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [loadData])
+    }, [loadData]),
   );
 
   // --- STATUS LOGIC ---
@@ -170,41 +171,69 @@ export default function VandaagScreen() {
     if (!task) return;
     if (getTaskStatus(task) !== "ACTIONABLE") return;
 
-    // 1. UI Update
+    try {
+      await fetch(`${ROBOT_API_URL}/lock_open`, {
+        method: "POST",
+      });
+    } catch (e) {
+      console.log("Kon slot niet openen");
+    }
+
+    setTakingMedication(id);
+
+    setTimeout(async () => {
+      setTakingMedication((current) => {
+        if (current === id) {
+          fetch(`${ROBOT_API_URL}/lock_close`, {
+            method: "POST",
+          }).catch(() => {});
+
+          return null;
+        }
+
+        return current;
+      });
+    }, 5000);
+  };
+
+  const finishMedication = async (id: number) => {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+
+    try {
+      await fetch(`${ROBOT_API_URL}/lock_close`, {
+        method: "POST",
+      });
+    } catch {}
+
     const newTasks = tasks.map((t) =>
-      t.id === id ? { ...t, taken: true } : t
+      t.id === id ? { ...t, taken: true } : t,
     );
+
     setTasks(newTasks);
 
-    // 2. Save status
     const dateKey = `tasks_${selectedDate.toDateString()}`;
     await AsyncStorage.setItem(dateKey, JSON.stringify(newTasks));
 
-    // 3. Decrease stock in Database!
     await decreaseStock(task.medId, task.amount);
 
-    // 4. Update local 'low stock' display immediately
     const updatedMeds = await getMedications();
     setLowStockMeds(updatedMeds.filter((m) => m.stock < 10));
 
-    // --- NIEUWE LOGICA VOOR HET "TOILET SCENARIO" ---
-    // Zoek het medicijn dat we net hebben ingenomen
     const currentMed = updatedMeds.find((m) => m.id === task.medId);
 
-    // Als de voorraad NU laag is (<10) EN het is nog niet besteld...
-    // Dan starten we de timer op de robot.
     if (currentMed && currentMed.stock < 10 && !currentMed.isOrdered) {
-      console.log("Mino activeren voor 'Nawerk' herinnering...");
       try {
-        await fetch(`${ROBOT_API_URL}/start_restock_timer`, { method: "POST" });
-      } catch (e) {
-        console.log("Kon robot niet bereiken voor timer");
-      }
+        await fetch(`${ROBOT_API_URL}/start_restock_timer`, {
+          method: "POST",
+        });
+      } catch {}
     }
 
-    // 5. Bevestig geluid op robot (Piepje dat inname OK is)
     Pi.confirmMed(id).catch(console.error);
     Pi.stopReminder().catch(() => {});
+
+    setTakingMedication(null);
   };
 
   const startDemoScenario = () => {
@@ -272,7 +301,7 @@ export default function VandaagScreen() {
             (() => {
               // Checken: zijn er nog medicijnen die NIET gemeld zijn?
               const unhandledCount = lowStockMeds.filter(
-                (m) => !m.isOrdered
+                (m) => !m.isOrdered,
               ).length;
               const isAllHandled = unhandledCount === 0;
 
@@ -395,6 +424,14 @@ export default function VandaagScreen() {
                   break;
               }
 
+              if (takingMedication === task.id) {
+                btnStyle = styles.btnActive;
+                btnText = "GENOMEN";
+                iconName = "checkmark-circle";
+                iconColor = "#fff";
+                isDisabled = false;
+              }
+
               return (
                 <View key={task.id} style={styles.compactCard}>
                   <View style={styles.timelineSidebar}>
@@ -423,7 +460,11 @@ export default function VandaagScreen() {
                     </View>
                     <TouchableOpacity
                       disabled={isDisabled}
-                      onPress={() => confirmMedication(task.id)}
+                      onPress={() =>
+                        takingMedication === task.id
+                          ? finishMedication(task.id)
+                          : confirmMedication(task.id)
+                      }
                       style={[styles.compactBtn, btnStyle]}
                     >
                       {status === "WAITING" ||
