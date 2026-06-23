@@ -41,7 +41,8 @@
           "cameraPermission": "Mino heeft toegang nodig tot je camera om medicijnen te scannen."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
