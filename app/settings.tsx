@@ -1,23 +1,24 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable react/no-unescaped-entities */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useState, useEffect } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
+  Modal,
+  ScrollView,
+  StatusBar,
   StyleSheet,
-  View,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
-  ScrollView,
-  Switch,
-  StatusBar,
-  ActivityIndicator,
-  Modal,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getPiBaseUrl, setPiBaseUrl, Pi } from "../services/pi";
 import { useRole } from "../context/RoleContext";
+import { getPiBaseUrl, Pi, setPiBaseUrl } from "../services/pi";
 
 export default function SettingsScreen() {
   const { role, setRole } = useRole();
@@ -29,6 +30,8 @@ export default function SettingsScreen() {
   const [demoMode, setDemoMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [requireScan, setRequireScan] = useState(true);
+  const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
+  const [robotOnline, setRobotOnline] = useState(false);
 
   // --- CUSTOM MODAL STATE ---
   const [modalVisible, setModalVisible] = useState(false);
@@ -58,6 +61,18 @@ export default function SettingsScreen() {
     };
     load();
   }, []);
+
+  useEffect(() => {
+    if (!url) return;
+
+    loadBattery();
+
+    const interval = setInterval(() => {
+      loadBattery();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [url]);
 
   // --- HELPER: SHOW MODAL ---
   const showModal = (
@@ -104,8 +119,10 @@ export default function SettingsScreen() {
     try {
       await setPiBaseUrl(url);
       await Pi.health();
+      setRobotOnline(true);
       showModal("Verbonden!", "De robot is bereikbaar.", "success");
     } catch (e) {
+      setRobotOnline(false);
       showModal(
         "Verbinding Mislukt",
         "Kan geen verbinding maken. Check IP en WiFi.",
@@ -115,6 +132,24 @@ export default function SettingsScreen() {
       setLoading(false);
     }
   };
+
+  async function loadBattery() {
+    try {
+      const response = await fetch(`${url}/battery`);
+      const data = await response.json();
+
+      setBatteryVoltage(data.voltage);
+      setRobotOnline(true);
+    } catch (error) {
+      setRobotOnline(false);
+      console.log(error);
+    }
+  }
+
+  const batteryPercentage =
+    batteryVoltage !== null
+      ? Math.max(0, Math.min(100, Math.round((batteryVoltage / 6.55) * 100)))
+      : null;
 
   const confirmReset = () => {
     showModal(
@@ -235,6 +270,78 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ROBOT CONNECTIVITEIT</Text>
           <View style={styles.card}>
+            <View
+              style={{
+                backgroundColor: "#2c2c2e",
+                padding: 12,
+                borderRadius: 8,
+                marginBottom: 15,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 8,
+                }}
+              >
+                <Ionicons
+                  name={
+                    batteryPercentage === null
+                      ? "battery-dead"
+                      : batteryPercentage > 75
+                        ? "battery-full"
+                        : batteryPercentage > 30
+                          ? "battery-half"
+                          : "battery-dead"
+                  }
+                  size={22}
+                  color={
+                    batteryPercentage === null
+                      ? "#666"
+                      : batteryPercentage > 30
+                        ? "#10b981"
+                        : "#ef4444"
+                  }
+                />
+
+                <Text
+                  style={{
+                    color: "white",
+                    marginLeft: 10,
+                    fontSize: 15,
+                    fontWeight: "600",
+                  }}
+                >
+                  Batterij: {batteryPercentage ?? "--"}%
+                </Text>
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons
+                  name={robotOnline ? "wifi" : "wifi-outline"}
+                  size={22}
+                  color={robotOnline ? "#10b981" : "#ef4444"}
+                />
+
+                <Text
+                  style={{
+                    color: "white",
+                    marginLeft: 10,
+                    fontSize: 15,
+                    fontWeight: "600",
+                  }}
+                >
+                  {robotOnline ? "Robot online" : "Robot offline"}
+                </Text>
+              </View>
+            </View>
+
             <View style={styles.inputRow}>
               <Ionicons name="globe-outline" size={20} color="#666" />
               <TextInput
