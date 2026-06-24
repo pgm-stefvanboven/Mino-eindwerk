@@ -31,6 +31,9 @@ export default function SettingsScreen() {
   const [loading, setLoading] = useState(false);
   const [requireScan, setRequireScan] = useState(true);
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
+  const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
+    null,
+  );
   const [robotOnline, setRobotOnline] = useState(false);
 
   // --- CUSTOM MODAL STATE ---
@@ -138,18 +141,15 @@ export default function SettingsScreen() {
       const response = await fetch(`${url}/battery`);
       const data = await response.json();
 
-      setBatteryVoltage(data.voltage);
+      setBatteryVoltage(data.raw);
+      setBatteryPercentage(data.percentage);
+
       setRobotOnline(true);
     } catch (error) {
       setRobotOnline(false);
       console.log(error);
     }
   }
-
-  const batteryPercentage =
-    batteryVoltage !== null
-      ? Math.max(0, Math.min(100, Math.round((batteryVoltage / 6.55) * 100)))
-      : null;
 
   const confirmReset = () => {
     showModal(
