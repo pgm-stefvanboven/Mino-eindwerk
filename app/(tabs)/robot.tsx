@@ -7,13 +7,13 @@ import {
   Pressable,
   Platform,
   StatusBar,
-  Dimensions,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useNavigation } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ScreenOrientation from "expo-screen-orientation";
 import * as NavigationBar from "expo-navigation-bar";
 
@@ -29,8 +29,6 @@ const THEME = {
   border: "rgba(255, 255, 255, 0.15)",
   font: Platform.OS === "ios" ? "Menlo" : "monospace",
 };
-
-// --- COMPONENTEN ---
 
 const TechBtn = ({
   icon,
@@ -57,28 +55,26 @@ const TechBtn = ({
   </Pressable>
 );
 
-const StatusBadge = ({ status }: { status: string }) => (
-  <View
-    style={[
-      styles.badge,
-      {
-        backgroundColor:
-          status === "ONLINE"
-            ? "rgba(60, 220, 120, 0.2)"
-            : "rgba(255, 60, 60, 0.2)",
-        borderColor: status === "ONLINE" ? "#3cdc78" : "#ff4444",
-      },
-    ]}
-  >
-    <View
-      style={[
-        styles.dot,
-        { backgroundColor: status === "ONLINE" ? "#3cdc78" : "#ff4444" },
-      ]}
-    />
-    <Text style={styles.badgeText}>{status}</Text>
-  </View>
-);
+const StatusBadge = ({ status }: { status: string }) => {
+  // Standaard is rood (voor CONNECTING of OFFLINE)
+  let color = "#ff4444";
+  let bg = "rgba(255, 60, 60, 0.2)";
+
+  if (status === "ONLINE") {
+    color = "#3cdc78"; // Groen
+    bg = "rgba(60, 220, 120, 0.2)";
+  } else if (status === "VERGRENDELD") {
+    color = "#00f0ff"; // Blauw (past bij het slotje)
+    bg = "rgba(0, 240, 255, 0.15)";
+  }
+
+  return (
+    <View style={[styles.badge, { backgroundColor: bg, borderColor: color }]}>
+      <View style={[styles.dot, { backgroundColor: color }]} />
+      <Text style={styles.badgeText}>{status}</Text>
+    </View>
+  );
+};
 
 // Aangepaste DPad die 'size' accepteert voor schaling
 const DPad = ({
@@ -189,6 +185,15 @@ export default function RobotScreen() {
   >("CONNECTING");
   const [isFullscreen, setIsFullscreen] = React.useState(false);
 
+  // NIEUW: Toegangs staten
+  const [cameraAlways, setCameraAlways] = React.useState(false);
+  const [emergencyAccess, setEmergencyAccess] = React.useState(false);
+  const [contact, setContact] = React.useState({
+    name: "",
+    relation: "",
+    phone: "",
+  });
+
   const move = (dir: string) => {
     fetch(`${COMMAND_IP}/move/${dir}`).catch(() => setStatus("OFFLINE"));
   };
@@ -203,6 +208,23 @@ export default function RobotScreen() {
       if (Platform.OS === "android")
         NavigationBar.setVisibilityAsync("visible");
       reloadVideo();
+
+      AsyncStorage.multiGet([
+        "CONTACT_NAME",
+        "CONTACT_RELATION",
+        "CONTACT_PHONE",
+        "CAMERA_ALWAYS_ENABLED",
+        "CAMERA_EMERGENCY_ACCESS",
+      ]).then((result) => {
+        setContact({
+          name: result[0][1] || "",
+          relation: result[1][1] || "",
+          phone: result[2][1] || "",
+        });
+        setCameraAlways(result[3][1] === "true");
+        setEmergencyAccess(result[4][1] === "true");
+      });
+
       return () => {
         move("stop");
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
@@ -215,29 +237,41 @@ export default function RobotScreen() {
 
   const toggleFullscreen = async () => {
     if (isFullscreen) {
-      navigation.setOptions({ headerShown: true, tabBarStyle: undefined });
-      if (Platform.OS === "android")
+      navigation.setOptions({
+        headerShown: true,
+        tabBarStyle: undefined,
+      });
+
+      if (Platform.OS === "android") {
         await NavigationBar.setVisibilityAsync("visible");
+      }
+
       await ScreenOrientation.lockAsync(
         ScreenOrientation.OrientationLock.PORTRAIT,
       );
+
       setIsFullscreen(false);
     } else {
       navigation.setOptions({
         headerShown: false,
         tabBarStyle: { display: "none" },
       });
+
       await ScreenOrientation.lockAsync(
         ScreenOrientation.OrientationLock.LANDSCAPE,
       );
+
       if (Platform.OS === "android") {
         await NavigationBar.setVisibilityAsync("hidden");
+
         try {
           await NavigationBar.setBehaviorAsync("overlay-swipe");
-        } catch (e) {}
+        } catch {}
       }
+
       setIsFullscreen(true);
     }
+
     setTimeout(reloadVideo, 100);
   };
 
@@ -254,6 +288,9 @@ export default function RobotScreen() {
     </html>
   `;
 
+  // Check de toegang:
+  const hasAccess = cameraAlways || emergencyAccess;
+
   return (
     <View style={styles.root}>
       <StatusBar hidden={isFullscreen} barStyle="light-content" />
@@ -261,35 +298,84 @@ export default function RobotScreen() {
       {/* --- PORTRAIT MODE --- */}
       {!isFullscreen && (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-          {/* VIDEO SECTIE - GROTER GEMAAKT */}
           <View style={styles.videoContainer}>
-            <WebView
-              key={`p-${webKey}`}
-              source={{ html }}
-              style={{ flex: 1, backgroundColor: "#080a0c" }}
-              scrollEnabled={false}
-              onLoadEnd={() => setStatus("ONLINE")}
-              onError={() => setStatus("OFFLINE")}
-            />
+            {hasAccess ? (
+              <>
+                {/* BANNER BINNEN DE VIDEO ZODRA ER NOODTOEGANG IS */}
+                {emergencyAccess && (
+                  <View style={styles.emergencyBanner}>
+                    <Ionicons name="warning" size={16} color="#ff4444" />
+                    <Text style={styles.emergencyBannerText}>
+                      Noodtoegang actief
+                    </Text>
+                  </View>
+                )}
+
+                <WebView
+                  key={`p-${webKey}`}
+                  source={{ html }}
+                  style={{ flex: 1, backgroundColor: "#080a0c" }}
+                  scrollEnabled={false}
+                  onLoadEnd={() => setStatus("ONLINE")}
+                  onError={() => setStatus("OFFLINE")}
+                />
+              </>
+            ) : (
+              /* PRIVACY KAART ALS ER GEEN TOEGANG IS */
+              <View style={styles.privacyView}>
+                <Ionicons name="lock-closed" size={60} color="#00f0ff" />
+                <Text style={styles.privacyTitle}>Camera Vergrendeld</Text>
+                <Text style={styles.privacyText}>
+                  De camera is momenteel gedeactiveerd om de privacy van de
+                  patiënt te waarborgen. In het geval van een zorgscenario wordt
+                  dit scherm automatisch vrijgegeven.
+                </Text>
+              </View>
+            )}
           </View>
 
-          {/* CONTROL BAR (Status & Refresh) */}
+          {/* CONTROL BAR (Status & Refresh & Fullscreen) */}
           <View style={styles.controlBar}>
-            <StatusBadge status={status} />
-
+            <StatusBadge status={hasAccess ? status : "VERGRENDELD"} />
             <View style={{ flexDirection: "row", gap: 15 }}>
-              <TechBtn icon="refresh" size={40} onPress={reloadVideo} />
-              <TechBtn icon="scan" size={40} onPress={toggleFullscreen} />
+              {/* Verberg actieknoppen als er geen toegang is */}
+              {hasAccess && (
+                <>
+                  <TechBtn icon="refresh" size={40} onPress={reloadVideo} />
+                  <TechBtn icon="scan" size={40} onPress={toggleFullscreen} />
+                </>
+              )}
             </View>
           </View>
 
-          {/* KNOPPEN SECTIE - KLEINER GEMAAKT */}
-          <View style={styles.portraitControls}>
-            {/* size=42 is veel compacter dan de standaard 55 */}
-            <DPad moveFn={move} type="move" label="RIJDEN" size={42} />
-            <View style={styles.divider} />
-            <DPad moveFn={move} type="cam" label="KIJKEN" size={42} />
-          </View>
+          {/* BESTURING (Rijden & Kijken) */}
+          {hasAccess ? (
+            <View style={styles.portraitControls}>
+              <DPad moveFn={move} type="move" label="RIJDEN" size={42} />
+              <View style={styles.divider} />
+              <DPad moveFn={move} type="cam" label="KIJKEN" size={42} />
+            </View>
+          ) : (
+            /* Lege ruimte om de layout mooi in balans te houden als besturing weg is */
+            <View
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Text
+                style={{
+                  color: "#333",
+                  fontSize: 12,
+                  textTransform: "uppercase",
+                  letterSpacing: 2,
+                }}
+              >
+                Besturing gedeactiveerd
+              </Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -297,14 +383,23 @@ export default function RobotScreen() {
       {isFullscreen && (
         <View style={styles.fsRoot}>
           <View style={styles.fsVideoLayer}>
-            <WebView
-              key={`l-${webKey}`}
-              source={{ html }}
-              style={{ flex: 1, backgroundColor: "black" }}
-              scrollEnabled={false}
-              onLoadEnd={() => setStatus("ONLINE")}
-              onError={() => setStatus("OFFLINE")}
-            />
+            {hasAccess ? (
+              <WebView
+                key={`l-${webKey}`}
+                source={{ html }}
+                style={{ flex: 1, backgroundColor: "black" }}
+                scrollEnabled={false}
+                onLoadEnd={() => setStatus("ONLINE")}
+                onError={() => setStatus("OFFLINE")}
+              />
+            ) : (
+              <View style={[styles.privacyView, { backgroundColor: "black" }]}>
+                <Ionicons name="lock-closed" size={80} color="#00f0ff" />
+                <Text style={[styles.privacyTitle, { fontSize: 24 }]}>
+                  Camera Vergrendeld
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* HUD LAYER */}
@@ -317,29 +412,33 @@ export default function RobotScreen() {
               },
             ]}
           >
-            {/* Status in Fullscreen (Toegevoegd) */}
             <View style={styles.fsTopCenter}>
-              <StatusBadge status={status} />
+              <StatusBadge status={hasAccess ? status : "VERGRENDELD"} />
             </View>
 
-            {/* Linksonder: RIJDEN (Grootte standaard 50 is hier prima) */}
-            <View style={styles.fsBottomLeft}>
-              <DPad moveFn={move} type="move" size={55} />
-            </View>
+            {/* Verberg D-Pads als er geen toegang is */}
+            {hasAccess && (
+              <>
+                <View style={styles.fsBottomLeft}>
+                  <DPad moveFn={move} type="move" size={55} />
+                </View>
+                <View style={styles.fsBottomRight}>
+                  <DPad moveFn={move} type="cam" size={55} />
+                </View>
+              </>
+            )}
 
-            {/* Rechtsonder: KIJKEN */}
-            <View style={styles.fsBottomRight}>
-              <DPad moveFn={move} type="cam" size={55} />
-            </View>
-
-            {/* Rechtsboven: Acties */}
             <View style={styles.fsTopRight}>
-              <TechBtn
-                icon="refresh"
-                size={45}
-                onPress={reloadVideo}
-                style={{ marginBottom: 15 }}
-              />
+              {/* Refresh kan weg als er geen camera is */}
+              {hasAccess && (
+                <TechBtn
+                  icon="refresh"
+                  size={45}
+                  onPress={reloadVideo}
+                  style={{ marginBottom: 15 }}
+                />
+              )}
+              {/* SLUIT-KNOP ALTIJD TONEN! Zodat je nooit vast komt te zitten */}
               <TechBtn
                 icon="close"
                 size={45}
@@ -357,6 +456,49 @@ export default function RobotScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#050505" },
   container: { flex: 1, paddingBottom: 20 },
+
+  // --- NIEUW: PRIVACY MODUS & BANNER ---
+  privacyView: {
+    flex: 1,
+    backgroundColor: "#111",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 30,
+  },
+  privacyTitle: {
+    color: "#00f0ff",
+    fontSize: 18,
+    fontWeight: "bold",
+    marginTop: 15,
+    letterSpacing: 1,
+  },
+  privacyText: {
+    color: "#888",
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 10,
+    lineHeight: 18,
+  },
+  emergencyBanner: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "rgba(255, 68, 68, 0.9)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 6,
+    zIndex: 10,
+  },
+  emergencyBannerText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 12,
+    marginLeft: 6,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
 
   // --- VIDEO STYLES (AANGEPAST) ---
   videoContainer: {

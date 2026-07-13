@@ -48,6 +48,12 @@ export default function VandaagScreen() {
     "idle" | "reminder" | "waiting" | "emergency"
   >("idle");
 
+  const [contact, setContact] = useState({
+    name: "",
+    relation: "",
+    phone: "",
+  });
+
   // Update clock every second
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -83,6 +89,16 @@ export default function VandaagScreen() {
   // --- DATA LOADING ---
   const loadData = useCallback(async () => {
     setIsLoading(true);
+
+    const name = await AsyncStorage.getItem("CONTACT_NAME");
+    const relation = await AsyncStorage.getItem("CONTACT_RELATION");
+    const phone = await AsyncStorage.getItem("CONTACT_PHONE");
+
+    setContact({
+      name: name || "",
+      relation: relation || "",
+      phone: phone || "",
+    });
 
     // 1. Check Stock (for the warning at the top)
     const currentMeds = await getMedications();
@@ -237,23 +253,27 @@ export default function VandaagScreen() {
     Pi.confirmMed(id).catch(console.error);
     Pi.stopReminder().catch(() => {});
 
+    await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
+    setEmergencyActive(false);
+    setAlarmStage("idle");
+
     setTakingMedication(null);
   };
 
   const startDemoScenario = () => {
     setShowDemoModal(true);
-
     setAlarmStage("reminder");
-
     Pi.startReminder();
 
     setTimeout(() => {
       setAlarmStage("waiting");
     }, 5000);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setAlarmStage("emergency");
       setEmergencyActive(true);
+
+      await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
     }, 10000);
   };
 
@@ -391,7 +411,49 @@ export default function VandaagScreen() {
               );
             })()}
 
-          {emergencyActive && (
+          {alarmStage === "reminder" && (
+            <View
+              style={{
+                backgroundColor: "rgba(59,130,246,0.15)",
+                borderColor: "#3b82f6",
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 14,
+                marginBottom: 20,
+              }}
+            >
+              <Text style={{ color: "#3b82f6", fontWeight: "bold" }}>
+                Herinnering actief
+              </Text>
+
+              <Text style={{ color: "#ccc", marginTop: 6 }}>
+                Mino herinnert de gebruiker om de medicatie in te nemen.
+              </Text>
+            </View>
+          )}
+
+          {alarmStage === "waiting" && (
+            <View
+              style={{
+                backgroundColor: "rgba(245,158,11,0.15)",
+                borderColor: "#f59e0b",
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 14,
+                marginBottom: 20,
+              }}
+            >
+              <Text style={{ color: "#f59e0b", fontWeight: "bold" }}>
+                Geen reactie ontvangen
+              </Text>
+
+              <Text style={{ color: "#ccc", marginTop: 6 }}>
+                Mino wacht nog op een bevestiging van de medicatie-inname.
+              </Text>
+            </View>
+          )}
+
+          {alarmStage === "emergency" && (
             <View
               style={{
                 backgroundColor: "rgba(255,68,68,0.15)",
@@ -402,14 +464,57 @@ export default function VandaagScreen() {
                 marginBottom: 20,
               }}
             >
-              <Text style={{ color: "#ff4444", fontWeight: "bold" }}>
-                Noodsituatie actief
+              <Text
+                style={{
+                  color: "#ff4444",
+                  fontWeight: "bold",
+                  fontSize: 18,
+                }}
+              >
+                Noodsituatie gedetecteerd
               </Text>
 
-              <Text style={{ color: "#ccc", marginTop: 6 }}>
-                Er werd geen reactie ontvangen op de medicatieherinnering. Mino
-                heeft een noodsituatie gedetecteerd en schakelt de mantelzorger
-                in.
+              <Text
+                style={{
+                  color: "#ccc",
+                  marginTop: 8,
+                  lineHeight: 22,
+                }}
+              >
+                Na meerdere onbeantwoorde herinneringen werd deze mantelzorger
+                automatisch verwittigd:
+              </Text>
+
+              <Text
+                style={{
+                  color: "#fff",
+                  fontWeight: "600",
+                  marginTop: 12,
+                }}
+              >
+                {contact.name}
+              </Text>
+
+              <Text style={{ color: "#bbb" }}>{contact.relation}</Text>
+
+              <Text
+                style={{
+                  color: "#e5e7eb",
+                  marginTop: 4,
+                }}
+              >
+                {contact.phone}
+              </Text>
+
+              <Text
+                style={{
+                  color: "#ccc",
+                  marginTop: 12,
+                  lineHeight: 22,
+                }}
+              >
+                Cameratoegang werd tijdelijk vrijgegeven zodat de mantelzorger
+                de situatie kan beoordelen.
               </Text>
             </View>
           )}
@@ -532,7 +637,7 @@ export default function VandaagScreen() {
               style={styles.demoLink}
               onPress={startDemoScenario}
             >
-              <Text style={styles.demoLinkText}>Test Alarm Systeem</Text>
+              <Text style={styles.demoLinkText}>Start zorgscenario</Text>
             </TouchableOpacity>
           )}
         </ScrollView>
