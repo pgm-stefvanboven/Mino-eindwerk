@@ -43,6 +43,10 @@ export default function VandaagScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lowStockMeds, setLowStockMeds] = useState<Medication[]>([]);
   const [takingMedication, setTakingMedication] = useState<number | null>(null);
+  const [emergencyActive, setEmergencyActive] = useState(false);
+  const [alarmStage, setAlarmStage] = useState<
+    "idle" | "reminder" | "waiting" | "emergency"
+  >("idle");
 
   // Update clock every second
   useEffect(() => {
@@ -238,7 +242,19 @@ export default function VandaagScreen() {
 
   const startDemoScenario = () => {
     setShowDemoModal(true);
+
+    setAlarmStage("reminder");
+
     Pi.startReminder();
+
+    setTimeout(() => {
+      setAlarmStage("waiting");
+    }, 5000);
+
+    setTimeout(() => {
+      setAlarmStage("emergency");
+      setEmergencyActive(true);
+    }, 10000);
   };
 
   const formatDateDisplay = (date: Date) => {
@@ -374,6 +390,29 @@ export default function VandaagScreen() {
                 </View>
               );
             })()}
+
+          {emergencyActive && (
+            <View
+              style={{
+                backgroundColor: "rgba(255,68,68,0.15)",
+                borderColor: "#ff4444",
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 14,
+                marginBottom: 20,
+              }}
+            >
+              <Text style={{ color: "#ff4444", fontWeight: "bold" }}>
+                Noodsituatie actief
+              </Text>
+
+              <Text style={{ color: "#ccc", marginTop: 6 }}>
+                Er werd geen reactie ontvangen op de medicatieherinnering. Mino
+                heeft een noodsituatie gedetecteerd en schakelt de mantelzorger
+                in.
+              </Text>
+            </View>
+          )}
 
           {/* TIMELINE */}
           <View style={styles.timelineContainer}>

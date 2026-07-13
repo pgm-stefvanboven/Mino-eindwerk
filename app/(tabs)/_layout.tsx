@@ -69,8 +69,8 @@ export default function TabLayout() {
         name="robot"
         options={{
           title: "CAMERA",
-          // 3. PRIVACY-BY-DESIGN: Verberg de tab volledig voor de mantelzorger
-          href: role === "mantelzorger" ? null : "/robot",
+          // 3. PRIVACY-BY-DESIGN: Hide the tab completely from the patient.
+          href: role === "patient" ? null : "/robot",
           tabBarIcon: ({ color }) => (
             <Ionicons name="videocam" size={24} color={color} />
           ),

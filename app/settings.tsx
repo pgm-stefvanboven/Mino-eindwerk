@@ -30,6 +30,7 @@ export default function SettingsScreen() {
   const [demoMode, setDemoMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [requireScan, setRequireScan] = useState(true);
+  const [cameraEmergencyOnly, setCameraEmergencyOnly] = useState(true);
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
   const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
     null,
@@ -61,6 +62,12 @@ export default function SettingsScreen() {
       if (savedName) setContactName(savedName);
       if (savedRelation) setContactRelation(savedRelation);
       if (savedPhone) setContactPhone(savedPhone);
+
+      const savedCamera = await AsyncStorage.getItem("CAMERA_EMERGENCY_ONLY");
+
+      if (savedCamera !== null) {
+        setCameraEmergencyOnly(savedCamera === "true");
+      }
     };
     load();
   }, []);
@@ -91,6 +98,11 @@ export default function SettingsScreen() {
   const handlePhoneChange = (text: string) => {
     const cleaned = text.replace(/[^0-9]/g, "").slice(0, 10);
     setContactPhone(cleaned);
+  };
+
+  const toggleCameraEmergencyOnly = async (value: boolean) => {
+    setCameraEmergencyOnly(value);
+    await AsyncStorage.setItem("CAMERA_EMERGENCY_ONLY", value.toString());
   };
 
   const saveContact = async () => {
@@ -243,7 +255,9 @@ export default function SettingsScreen() {
         {role === "mantelzorger" && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>ADAPTIEVE ZORG (PATIËNT)</Text>
+
             <View style={styles.card}>
+              {/* Zelfstandig voorraadbeheer */}
               <View style={styles.switchRow}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.switchTitle}>
@@ -251,15 +265,41 @@ export default function SettingsScreen() {
                   </Text>
                   <Text style={styles.switchSub}>
                     De patiënt kan barcodes scannen en zo nieuwe doosjes
-                    medicatie toevoegen of de stock bijwerken. Zet dit uit bij
-                    vergevorderde dementie.
+                    medicatie toevoegen of de voorraad bijwerken. Zet dit uit
+                    bij vergevorderde dementie.
                   </Text>
                 </View>
+
                 <Switch
                   value={requireScan}
                   onValueChange={toggleRequireScan}
                   trackColor={{ false: "#333", true: "#10b981" }}
-                  thumbColor={"white"}
+                  thumbColor="white"
+                />
+              </View>
+
+              {/* Scheidingslijn */}
+              <View style={styles.divider} />
+
+              {/* Camera */}
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.switchTitle}>
+                    Camera alleen bij noodsituatie
+                  </Text>
+
+                  <Text style={styles.switchSub}>
+                    De mantelzorger krijgt pas toegang tot de camera wanneer
+                    meerdere medicatiemomenten gemist zijn. Dit beschermt de
+                    privacy van de patiënt.
+                  </Text>
+                </View>
+
+                <Switch
+                  value={cameraEmergencyOnly}
+                  onValueChange={toggleCameraEmergencyOnly}
+                  trackColor={{ false: "#333", true: "#10b981" }}
+                  thumbColor="white"
                 />
               </View>
             </View>
