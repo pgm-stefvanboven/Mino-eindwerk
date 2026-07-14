@@ -12,29 +12,22 @@ from picamera2.outputs import FileOutput
 from picamera2.encoders import Quality
 
 # Hardware Imports
-print("--- HARDWARE LADEN ---")
-try: 
-    from Motor import Motor
-    print("Motor library gevonden.")
-except ImportError: 
-    Motor = None
-    print("LET OP: Motor library NIET gevonden!")
-
+try: from Motor import Motor
+except: pass
 try: from servo import Servo
-except: Servo = None
+except: pass
 try: from Led import Led
-except: Led = None
+except: pass
 try: from Buzzer import Buzzer
-except: Buzzer = None
+except: pass
 try: from ADC import Adc
-except: Adc = None
+except: pass
 try: from Light import Light
-except: Light = None
+except: pass
 try: from Ultrasonic import Ultrasonic
-except: Ultrasonic = None
+except: pass
 try: from Line_Tracking import Line_Tracking
-except: Line_Tracking = None
-
+except: pass
 from Command import COMMAND as cmd
 
 class StreamingOutput(io.BufferedIOBase):
@@ -49,40 +42,40 @@ class StreamingOutput(io.BufferedIOBase):
 
 class Server:
     def __init__(self):
-        self.cam_tilt = 90
-        self.cam_pan = 90
+        # --- CAMERA POSITIES ---
+        self.cam_tilt = 90  # Omhoog/Omlaag (Servo 1)
+        self.cam_pan = 90   # Links/Rechts (Servo 0)
+
+        # Hardware Init
         self.PWM = None
         self.servo = None
         self.led = self.buzzer = self.adc = self.light = self.infrared = self.ultrasonic = None
 
-        # --- MOTOR INIT (MET DEBUGGING) ---
-        print("Motor driver initialiseren...")
         try:
-            if Motor: 
-                self.PWM = Motor()
-                print(">>> Motor driver SUCCESVOL gestart!")
-            else:
-                print(">>> FOUT: Motor class is niet geladen.")
-        except Exception as e:
-            print(f">>> CRITISCHE FOUT bij starten Motor: {e}")
-            self.PWM = None
+            if Motor: self.PWM = Motor()
+        except: pass
 
         # --- SERVO INIT ---
         try:
             if Servo:
                 self.servo = Servo()
-                self.move_camera_servo('0', 90)
+                print("Servo's initialiseren...")
+                self.move_camera_servo('0', 90) # Pan
                 time.sleep(0.5)
-                self.move_camera_servo('1', 90)
-                print("Servo's gestart.")
+                self.move_camera_servo('1', 90) # Tilt
+                print("Servo's (0 & 1) gestart.")
         except Exception as e:
-            print(f"Servo fout: {e}")
+            print(f"FOUT: Kan Servo niet starten: {e}")
+            self.servo = None
 
         # Overige hardware
         try:
             if Led: self.led = Led()
+            if Ultrasonic: self.ultrasonic = Ultrasonic()
             if Buzzer: self.buzzer = Buzzer()
             if Adc: self.adc = Adc()
+            if Light: self.light = Light()
+            if Line_Tracking: self.infrared = Line_Tracking()
         except: pass
 
         self.Mode = "one"
@@ -91,8 +84,10 @@ class Server:
         self.connection1 = None
         self.connection = None
 
+        # Camera initialisatie doen we pas in sendvideo om crashes te voorkomen
+
     def StartTcpServer(self):
-        HOST = "0.0.0.0"
+        HOST = "0.0.0.0" # BELANGRIJK: Luister op alles
         self.server_socket1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket1.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket1.bind((HOST, 5000))
@@ -102,7 +97,7 @@ class Server:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((HOST, 8000))
         self.server_socket.listen(5)
-        print("Server luistert op 5000 (Commando) en 8000 (Video)")
+        print("Server luistert op 5000/8000")
 
     def StopTcpServer(self):
         try:
@@ -112,6 +107,7 @@ class Server:
             if self.server_socket1: self.server_socket1.close()
         except: pass
 
+    # --- HIER ZIT DE FIX VOOR HET BEELD (Jouw code had hier de oude 640x360 resolutie) ---
     def sendvideo(self):
         while True:
             print("Wachten op video verbinding...")
@@ -120,12 +116,14 @@ class Server:
                 self.connection = self.connection.makefile('wb')
                 print(f"Video verbonden met {self.client_address}")
             except:
-                time.sleep(0.5); continue
+                time.sleep(0.5)
+                continue
 
             camera = None
             try:
                 camera = Picamera2()
-                # JOUW GOEDE CAMERA CONFIGURATIE
+                # 1296x972 = UITGEZOOMD BEELD (Hele sensor)
+                # Sharpness 4.0 = SCHERP BEELD
                 config = camera.create_video_configuration(
                     main={"size": (1296, 972), "format": "RGB888"},
                     controls={"AwbEnable": True, "AeEnable": True, "Sharpness": 4.0, "Contrast": 1.2}
@@ -133,7 +131,7 @@ class Server:
                 camera.configure(config)
                 
                 output = StreamingOutput()
-                encoder = JpegEncoder(q=40)
+                encoder = JpegEncoder(q=40) # Compressie voor snelheid
                 camera.start_recording(encoder, FileOutput(output), quality=Quality.HIGH)
 
                 while True:
@@ -141,7 +139,9 @@ class Server:
                         if output.condition.wait(timeout=2):
                             frame = output.frame
                         else: continue
+                    
                     if frame is None: continue
+
                     try:
                         lenFrame = len(frame)
                         lengthBin = struct.pack('<I', lenFrame)
@@ -154,7 +154,9 @@ class Server:
                 print(f"Camera fout: {e}")
             finally:
                 try:
-                    if camera: camera.stop_recording(); camera.close()
+                    if camera: 
+                        camera.stop_recording()
+                        camera.close()
                     if self.connection: self.connection.close()
                 except: pass
 
@@ -163,7 +165,6 @@ class Server:
             try:
                 conn, addr = self.server_socket1.accept()
                 self.connection1 = conn
-                print(f"Commando verbonden met {addr}")
             except:
                 time.sleep(0.2); continue
             
@@ -180,10 +181,7 @@ class Server:
                 else: restCmd = ""
 
                 for line in cmdArray:
-                    if line.strip(): 
-                        # HIER PRINTEN WE HET COMMANDO
-                        print(f"Ontvangen commando: {line.strip()}")
-                        self._handle_one_command(line.strip())
+                    if line.strip(): self._handle_one_command(line.strip())
             
             try: conn.close()
             except: pass
@@ -192,84 +190,41 @@ class Server:
         if not self.servo: return
         if angle < 0: angle = 0
         if angle > 180: angle = 180
-        try: self.servo.setServoPwm(str(channel), angle)
-        except: pass
+        try:
+            self.servo.setServoPwm(str(channel), angle)
+        except Exception as e:
+            print(f"Servo Error: {e}")
 
     def _handle_one_command(self, oneCmd):
         parts = oneCmd.split("#")
         if not parts: return
 
-        # CAMERA
-        if "CMD_CAMERA" in parts and self.servo:
+        # --- CAMERA LOGICA ---
+        if "CMD_CAMERA" in parts and len(parts) > 1:
+            action = parts[1]
+            step = 10 
 
-    try:
-
-        direction = parts[1]
-
-        if direction == "LEFT":
-            self.cam_pan -= 15
-
-        elif direction == "RIGHT":
-            self.cam_pan += 15
-
-        elif direction == "UP":
-            self.cam_tilt += 10
-
-        elif direction == "DOWN":
-            self.cam_tilt -= 10
-
-        elif direction == "STOP":
+            if action == "UP":
+                self.cam_tilt -= step 
+                self.move_camera_servo('1', self.cam_tilt)
+            elif action == "DOWN":
+                self.cam_tilt += step
+                self.move_camera_servo('1', self.cam_tilt)
+            elif action == "LEFT":
+                self.cam_pan += step
+                self.move_camera_servo('0', self.cam_pan)
+            elif action == "RIGHT":
+                self.cam_pan -= step
+                self.move_camera_servo('0', self.cam_pan)
             return
 
-        # grenzen
-        self.cam_pan = max(0, min(180, self.cam_pan))
-        self.cam_tilt = max(0, min(180, self.cam_tilt))
-
-        self.move_camera_servo('0', self.cam_pan)
-        self.move_camera_servo('1', self.cam_tilt)
-
-        print(f"Camera -> pan={self.cam_pan}, tilt={self.cam_tilt}")
-
-    except Exception as e:
-        print(e)
-
-        # BUZZER
         if "CMD_BUZZER" in parts and self.buzzer:
             try: self.buzzer.run(parts[1])
             except: pass
 
-        # SLOT SERVO
-        if "CMD_LOCK" in parts:
-
-            print("CMD_LOCK ONTVANGEN")
-
-            if self.servo:
-                try:
-                    angle = int(parts[1])
-
-                    print(f"Servo4 naar {angle} graden")
-
-                    self.servo.setServoPwm('4', angle)
-
-                except Exception as e:
-                    print(f"Servo4 fout: {e}")
-
-        # --- MOTOR LOGICA MET DEBUGGING ---
-        if "CMD_MOTOR" in parts:
-            print(f"DEBUG: Motor commando herkend. PWM status: {self.PWM}")
-            if self.PWM:
-                try: 
-                    # Zet waarden om naar int
-                    val1 = int(float(parts[1]))
-                    val2 = int(float(parts[2]))
-                    val3 = int(float(parts[3]))
-                    val4 = int(float(parts[4]))
-                    print(f"DEBUG: Motoren aansturen: {val1}, {val2}, {val3}, {val4}")
-                    self.PWM.setMotorModel(val1, val2, val3, val4)
-                except Exception as e:
-                    print(f"FOUT bij aansturen motor: {e}")
-            else:
-                print("FOUT: Kan motor niet aansturen want self.PWM is leeg!")
+        if "CMD_MOTOR" in parts and self.PWM:
+            try: self.PWM.setMotorModel(int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]))
+            except: pass
 
     def Power(self):
         while True:
@@ -277,14 +232,10 @@ class Server:
                 if self.adc and self.connection1:
                     ADC_Power = self.adc.recvADC(2) * 5
                     msg = cmd.CMD_POWER + "#" + str(round(ADC_Power, 2)) + "\n"
-                    self.connection1.send(msg.encode("utf-8"))
+                    try: self.connection1.send(msg.encode("utf-8"))
+                    except: pass
             except: pass
             time.sleep(3)
 
 if __name__ == "__main__":
-    s = Server()
-    s.StartTcpServer()
-    threading.Thread(target=s.readdata, daemon=True).start()
-    threading.Thread(target=s.sendvideo, daemon=True).start()
-    threading.Thread(target=s.Power, daemon=True).start()
-    while True: time.sleep(1)
+    pass

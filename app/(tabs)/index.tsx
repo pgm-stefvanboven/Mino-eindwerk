@@ -260,13 +260,22 @@ export default function VandaagScreen() {
     setTakingMedication(null);
   };
 
-  const startDemoScenario = () => {
+  const startDemoScenario = async () => {
     setShowDemoModal(true);
     setAlarmStage("reminder");
-    Pi.startReminder();
 
-    setTimeout(() => {
+    // FASE 1
+    await fetch("http://10.91.88.75:5001/start_reminder", {
+      method: "POST",
+    });
+
+    setTimeout(async () => {
       setAlarmStage("waiting");
+
+      // FASE 2
+      await fetch("http://10.91.88.75:5001/second_reminder", {
+        method: "POST",
+      });
     }, 5000);
 
     setTimeout(async () => {
@@ -275,13 +284,10 @@ export default function VandaagScreen() {
 
       await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
 
-      try {
-        await fetch("http://10.91.88.75:5001/care_emergency", {
-          method: "POST",
-        });
-      } catch (err) {
-        console.error(err);
-      }
+      // FASE 3
+      await fetch("http://10.91.88.75:5001/care_emergency", {
+        method: "POST",
+      });
     }, 10000);
   };
 

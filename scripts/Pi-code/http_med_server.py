@@ -5,9 +5,11 @@ import time
 import struct
 import threading
 import datetime
+import subprocess
 
 from Led import Led
 from audio_player import speak, set_buzzer_fallback
+from ADC import Adc
 
 app = Flask(__name__)
 CORS(app)
@@ -22,11 +24,15 @@ GRACE_PERIOD_SECONDS = 15
 
 print(f"Verbinden met robot op {ROBOT_IP}...")
 
+adc = Adc()
+
 # --- STATUS VARIABELEN ---
 RESTOCK_STATE = {
     "active": False,
     "deadline": None
 }
+
+LAST_BATTERY_PERCENTAGE = 100
 
 # --- LED INITIALISATIE ---
 try:
@@ -170,10 +176,89 @@ def monitor_loop():
 # Start achtergrond monitor
 threading.Thread(target=monitor_loop, daemon=True).start()
 
-
 # =========================================================
 # API ENDPOINTS
 # =========================================================
+
+@app.post("/api/volume")
+def set_volume():
+    data = request.json
+    volume = data.get('volume', 50) 
+    
+    try:
+        # Past het volume aan via ALSA
+        subprocess.run(['amixer', '-c', '2', 'sset', 'PCM', f'{volume}%'], check=True)
+        return jsonify({"status": "success", "volume": volume})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.post("/start_reminder")
+def start_reminder():
+
+    print("EERSTE HERINNERING")
+
+    threading.Thread(
+        target=speak,
+        args=("Medication-time.mp3",),
+        daemon=True,
+    ).start()
+
+    if led and led.Ledsupported:
+
+        for i in range(3):
+            led.strip.set_all_led_color(0, 80, 255)   # blauw
+            time.sleep(0.4)
+
+            led.strip.set_all_led_color(0, 0, 0)
+            time.sleep(0.4)
+
+    return jsonify({"status": "ok"})
+
+@app.post("/second_reminder")
+def second_reminder():
+
+    print("TWEEDE HERINNERING")
+
+    threading.Thread(
+        target=speak,
+        args=("Medication-reminder.mp3",),
+        daemon=True,
+    ).start()
+
+    if led and led.Ledsupported:
+
+        for i in range(3):
+            led.strip.set_all_led_color(255, 120, 0)   # oranje
+            time.sleep(0.4)
+
+            led.strip.set_all_led_color(0, 0, 0)
+            time.sleep(0.4)
+
+    return jsonify({"status": "ok"})
+
+@app.post("/care_emergency")
+def care_emergency():
+
+    print("NOODSITUATIE")
+
+    # Spreek boodschap
+    threading.Thread(
+    target=speak,
+    args=("Emergency.mp3",),
+    daemon=True,
+).start()
+    # Alarm leds
+    if led and led.Ledsupported:
+        for _ in range(6):
+            led.strip.set_all_led_color(255, 0, 0)
+            time.sleep(0.25)
+
+            led.strip.set_all_led_color(0, 0, 0)
+            time.sleep(0.25)
+
+    return jsonify({
+        "status": "ok"
+    })
 
 @app.get("/health")
 def health():
@@ -182,6 +267,27 @@ def health():
         "robot_ip": ROBOT_IP
     })
 
+@app.get("/battery")
+def battery():
+
+    global LAST_BATTERY_PERCENTAGE
+
+    raw = round(adc.recvADC(2), 2)
+
+    percentage = round(
+        ((raw - 1.10) / (1.42 - 1.10)) * 100
+    )
+
+    percentage = max(0, min(100, percentage))
+
+    # batterij mag enkel dalen
+    if percentage < LAST_BATTERY_PERCENTAGE:
+        LAST_BATTERY_PERCENTAGE = percentage
+
+    return jsonify({
+        "raw": raw,
+        "percentage": LAST_BATTERY_PERCENTAGE
+    })
 
 @app.get("/video_feed")
 def video_feed():
@@ -230,6 +336,9 @@ def lock_close():
 def confirm_med(id):
 
     print(f"Medicatie bevestigd: {id}")
+
+    # SLOT DICHT
+    send_cmd("CMD_LOCK#20")
 
     # AUDIO FEEDBACK
     speak("Medication-done.mp3")
