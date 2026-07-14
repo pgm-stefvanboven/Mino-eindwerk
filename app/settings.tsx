@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Slider from "@react-native-community/slider";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -29,7 +30,11 @@ export default function SettingsScreen() {
   const [contactPhone, setContactPhone] = useState("");
   const [demoMode, setDemoMode] = useState(true);
   const [loading, setLoading] = useState(false);
+
+  // Zorg scenario states
   const [requireScan, setRequireScan] = useState(true);
+  const [volumeLocked, setVolumeLocked] = useState(false); // NIEUW
+  const [volume, setVolume] = useState(50); // NIEUW
 
   // Nieuwe state voor de demo camera override
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
@@ -59,10 +64,12 @@ export default function SettingsScreen() {
       const savedCamAlways = await AsyncStorage.getItem(
         "CAMERA_ALWAYS_ENABLED",
       );
+      const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED"); // NIEUW
 
       if (savedScan !== null) setRequireScan(savedScan === "true");
       if (savedCamAlways !== null)
         setCameraAlwaysEnabled(savedCamAlways === "true");
+      if (savedVolumeLock !== null) setVolumeLocked(savedVolumeLock === "true"); // NIEUW
 
       if (savedName) setContactName(savedName);
       if (savedRelation) setContactRelation(savedRelation);
@@ -117,6 +124,29 @@ export default function SettingsScreen() {
     await AsyncStorage.setItem("REQUIRE_SCAN", value.toString());
   };
 
+  // NIEUW: Functie om volume lock op te slaan
+  const toggleVolumeLock = async (value: boolean) => {
+    setVolumeLocked(value);
+    await AsyncStorage.setItem("VOLUME_LOCKED", value.toString());
+  };
+
+  // NIEUW: Functie om volume naar backend te sturen
+  const handleVolumeChange = async (value: number) => {
+    const roundedVolume = Math.round(value);
+    setVolume(roundedVolume);
+    if (!url) return;
+
+    try {
+      await fetch(`${url}/api/volume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ volume: roundedVolume }),
+      });
+    } catch (error) {
+      console.error("Fout bij aanpassen volume:", error);
+    }
+  };
+
   const toggleCameraAlwaysEnabled = async (value: boolean) => {
     setCameraAlwaysEnabled(value);
     await AsyncStorage.setItem("CAMERA_ALWAYS_ENABLED", value.toString());
@@ -153,7 +183,6 @@ export default function SettingsScreen() {
     }
   }
 
-  // --- NIEUW: Reset Zorgscenario (trekt noodtoegang in) ---
   const resetZorgScenario = async () => {
     await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
     showModal(
@@ -251,6 +280,63 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* NIEUW: AUDIO & VOLUME (Zichtbaar voor iedereen, maar disableable voor patiënt) */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>AUDIO & VOLUME</Text>
+          <View style={styles.card}>
+            <View style={{ alignItems: "center", paddingVertical: 10 }}>
+              <Text
+                style={{
+                  color: "white",
+                  fontSize: 16,
+                  marginBottom: 15,
+                  fontWeight: "600",
+                }}
+              >
+                Mino Volume: {Math.round(volume)}%
+              </Text>
+              <Slider
+                style={{ width: "100%", height: 40 }}
+                minimumValue={0}
+                maximumValue={100}
+                step={1}
+                value={volume}
+                onValueChange={(val) => setVolume(val)}
+                onSlidingComplete={handleVolumeChange}
+                // Pas kleuren aan als het vergrendeld is
+                minimumTrackTintColor={
+                  role === "patient" && volumeLocked ? "#444" : "#007AFF"
+                }
+                maximumTrackTintColor="#333"
+                thumbTintColor={
+                  role === "patient" && volumeLocked ? "#666" : "white"
+                }
+                // Disable de slider voor de patiënt als de lock aan staat
+                disabled={role === "patient" && volumeLocked}
+              />
+              {role === "patient" && volumeLocked && (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginTop: 10,
+                  }}
+                >
+                  <Ionicons
+                    name="lock-closed"
+                    size={14}
+                    color="#ffaa00"
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={{ color: "#ffaa00", fontSize: 12 }}>
+                    Volume is vergrendeld door mantelzorger
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+
         {/* MANTELZORGER SPECIFIEK */}
         {role === "mantelzorger" && (
           <View style={styles.section}>
@@ -274,6 +360,25 @@ export default function SettingsScreen() {
                   thumbColor="white"
                 />
               </View>
+
+              <View style={styles.divider} />
+
+              {/* NIEUW: Volume lock switch voor mantelzorger */}
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.switchTitle}>Vergrendel Volume</Text>
+                  <Text style={styles.switchSub}>
+                    Blokkeer de volume-slider voor de patiënt om onbedoeld
+                    geluidsoverlast of overprikkeling te voorkomen.
+                  </Text>
+                </View>
+                <Switch
+                  value={volumeLocked}
+                  onValueChange={toggleVolumeLock}
+                  trackColor={{ false: "#333", true: "#ffaa00" }}
+                  thumbColor="white"
+                />
+              </View>
             </View>
           </View>
         )}
@@ -282,7 +387,6 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ROBOT CONNECTIVITEIT</Text>
           <View style={styles.card}>
-            {/* Zelfde als jouw originele code (Batterij & URL) */}
             <View style={styles.inputRow}>
               <Ionicons name="globe-outline" size={20} color="#666" />
               <TextInput
@@ -329,7 +433,6 @@ export default function SettingsScreen() {
 
             <View style={styles.divider} />
 
-            {/* NIEUW: Camera altijd aan toggle */}
             <View style={styles.switchRow}>
               <View style={{ flex: 1, paddingRight: 10 }}>
                 <Text style={styles.switchTitle}>
@@ -352,7 +455,6 @@ export default function SettingsScreen() {
               <>
                 <View style={styles.divider} />
 
-                {/* NIEUW: Reset Zorgscenario */}
                 <TouchableOpacity
                   style={[
                     styles.dangerBtn,
@@ -395,7 +497,6 @@ export default function SettingsScreen() {
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}
       >
-        {/* Zelfde modal code als origineel */}
         <View style={styles.modalOverlay}>
           <View
             style={[

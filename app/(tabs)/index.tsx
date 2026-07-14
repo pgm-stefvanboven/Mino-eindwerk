@@ -274,6 +274,14 @@ export default function VandaagScreen() {
       setEmergencyActive(true);
 
       await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
+
+      try {
+        await fetch("http://10.91.88.75:5001/care_emergency", {
+          method: "POST",
+        });
+      } catch (err) {
+        console.error(err);
+      }
     }, 10000);
   };
 
