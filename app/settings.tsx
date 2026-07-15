@@ -64,16 +64,21 @@ export default function SettingsScreen() {
       const savedCamAlways = await AsyncStorage.getItem(
         "CAMERA_ALWAYS_ENABLED",
       );
-      const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED"); // NIEUW
+      const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
 
       if (savedScan !== null) setRequireScan(savedScan === "true");
       if (savedCamAlways !== null)
         setCameraAlwaysEnabled(savedCamAlways === "true");
-      if (savedVolumeLock !== null) setVolumeLocked(savedVolumeLock === "true"); // NIEUW
+      if (savedVolumeLock !== null) setVolumeLocked(savedVolumeLock === "true");
 
       if (savedName) setContactName(savedName);
       if (savedRelation) setContactRelation(savedRelation);
       if (savedPhone) setContactPhone(savedPhone);
+
+      const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
+      if (savedVolume !== null) {
+        setVolume(parseInt(savedVolume)); // Set the slider to the saved value
+      }
     };
     load();
   }, []);
@@ -134,6 +139,10 @@ export default function SettingsScreen() {
   const handleVolumeChange = async (value: number) => {
     const roundedVolume = Math.round(value);
     setVolume(roundedVolume);
+
+    // NIEUW: Sla het volume lokaal op in de app
+    await AsyncStorage.setItem("MINO_VOLUME", roundedVolume.toString());
+
     if (!url) return;
 
     try {
