@@ -192,25 +192,36 @@ def set_volume():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+def play_with_led(audio_file, r, g, b):
+    audio = threading.Thread(
+        target=speak,
+        args=(audio_file,),
+    )
+    audio.start()
+
+    if led and led.Ledsupported:
+        while audio.is_alive():
+            led.strip.set_all_led_color(r, g, b)
+            time.sleep(0.35)
+
+            led.strip.set_all_led_color(0, 0, 0)
+            time.sleep(0.25)
+
+        led.strip.set_all_led_color(0, 0, 0)
+
+    audio.join()
+
 @app.post("/start_reminder")
 def start_reminder():
 
     print("EERSTE HERINNERING")
 
-    threading.Thread(
-        target=speak,
-        args=("Medication-time.mp3",),
-        daemon=True,
-    ).start()
-
-    if led and led.Ledsupported:
-
-        for i in range(3):
-            led.strip.set_all_led_color(0, 80, 255)   # blauw
-            time.sleep(0.4)
-
-            led.strip.set_all_led_color(0, 0, 0)
-            time.sleep(0.4)
+    play_with_led(
+        "Medication-time.mp3",
+        0,
+        80,
+        255,
+    )
 
     return jsonify({"status": "ok"})
 
@@ -219,20 +230,12 @@ def second_reminder():
 
     print("TWEEDE HERINNERING")
 
-    threading.Thread(
-        target=speak,
-        args=("Medication-reminder.mp3",),
-        daemon=True,
-    ).start()
-
-    if led and led.Ledsupported:
-
-        for i in range(3):
-            led.strip.set_all_led_color(255, 120, 0)   # oranje
-            time.sleep(0.4)
-
-            led.strip.set_all_led_color(0, 0, 0)
-            time.sleep(0.4)
+    play_with_led(
+        "Medication-reminder.mp3",
+        255,
+        120,
+        0,
+    )
 
     return jsonify({"status": "ok"})
 
@@ -241,24 +244,14 @@ def care_emergency():
 
     print("NOODSITUATIE")
 
-    # Spreek boodschap
-    threading.Thread(
-    target=speak,
-    args=("Emergency.mp3",),
-    daemon=True,
-).start()
-    # Alarm leds
-    if led and led.Ledsupported:
-        for _ in range(6):
-            led.strip.set_all_led_color(255, 0, 0)
-            time.sleep(0.25)
+    play_with_led(
+        "Emergency.mp3",
+        255,
+        0,
+        0,
+    )
 
-            led.strip.set_all_led_color(0, 0, 0)
-            time.sleep(0.25)
-
-    return jsonify({
-        "status": "ok"
-    })
+    return jsonify({"status": "ok"})
 
 @app.get("/health")
 def health():

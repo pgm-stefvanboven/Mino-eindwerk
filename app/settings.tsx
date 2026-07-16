@@ -346,6 +346,169 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* CONNECTIVITEIT */}
+        {/* CONNECTIVITEIT */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>ROBOT CONNECTIVITEIT</Text>
+
+          <View style={styles.card}>
+            {/* STATUS & BATTERIJ DASHBOARD (Nu ín de kaart) */}
+            {url ? (
+              <View
+                style={{
+                  backgroundColor: "rgba(0,0,0,0.2)", // Subtiele diepte
+                  borderRadius: 8,
+                  padding: 14,
+                  marginBottom: 16,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.03)",
+                }}
+              >
+                {/* Systeemstatus */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 12, // Ruimte tussen status en batterij
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <Ionicons
+                      name="hardware-chip-outline"
+                      size={16}
+                      color="#888"
+                    />
+                    <Text style={{ color: "#888", fontSize: 14 }}>
+                      Systeemstatus
+                    </Text>
+                  </View>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: robotOnline ? "#3cdc78" : "#ff4444",
+                        shadowColor: robotOnline ? "#3cdc78" : "#ff4444",
+                        shadowOpacity: 0.5,
+                        shadowRadius: 4,
+                      }}
+                    />
+                    <Text
+                      style={{
+                        color: robotOnline ? "#3cdc78" : "#ff4444",
+                        fontWeight: "bold",
+                        fontSize: 14,
+                        letterSpacing: 1, // Maakt uppercase tekst strakker
+                      }}
+                    >
+                      {robotOnline ? "ONLINE" : "OFFLINE"}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Batterij */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <Ionicons
+                      name={
+                        batteryPercentage !== null && batteryPercentage <= 20
+                          ? "battery-dead"
+                          : "battery-half"
+                      }
+                      size={16}
+                      color="#888"
+                    />
+                    <Text style={{ color: "#888", fontSize: 14 }}>
+                      Batterij
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={{
+                      // Kleur rood als batterij 20% of lager is, anders wit
+                      color:
+                        batteryPercentage !== null && batteryPercentage <= 20
+                          ? "#ff4444"
+                          : "white",
+                      fontWeight: "bold",
+                      fontSize: 14,
+                    }}
+                  >
+                    {batteryPercentage !== null
+                      ? `${batteryPercentage}%`
+                      : "--%"}
+
+                    {/* Voltage in een zachtere kleur zodat het percentage de focus krijgt */}
+                    <Text
+                      style={{
+                        color: "#666",
+                        fontWeight: "normal",
+                        fontSize: 12,
+                      }}
+                    >
+                      {batteryVoltage !== null
+                        ? ` (${batteryVoltage.toFixed(1)}V)`
+                        : ""}
+                    </Text>
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            {/* IP INPUT & KNOP */}
+            <View style={styles.inputRow}>
+              <Ionicons name="globe-outline" size={20} color="#666" />
+              <TextInput
+                style={styles.input}
+                value={url}
+                onChangeText={setUrl}
+                placeholder="http://192.168..."
+                placeholderTextColor="#444"
+                autoCapitalize="none"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={testConnection}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.actionBtnText}>TEST VERBINDING</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* MANTELZORGER SPECIFIEK */}
         {role === "mantelzorger" && (
           <View style={styles.section}>
