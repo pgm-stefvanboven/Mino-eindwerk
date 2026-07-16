@@ -555,35 +555,6 @@ export default function SettingsScreen() {
           </View>
         )}
 
-        {/* CONNECTIVITEIT */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>ROBOT CONNECTIVITEIT</Text>
-          <View style={styles.card}>
-            <View style={styles.inputRow}>
-              <Ionicons name="globe-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="http://192.168..."
-                placeholderTextColor="#444"
-                autoCapitalize="none"
-              />
-            </View>
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={testConnection}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.actionBtnText}>TEST VERBINDING</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* DEMO & SYSTEEM */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>SYSTEEM & DEMO</Text>
