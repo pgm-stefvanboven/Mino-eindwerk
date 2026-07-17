@@ -2,6 +2,15 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { supabase } from "../lib/supabase";
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
 export async function registerForPushNotifications() {
   if (!Device.isDevice) {
     console.log("Gebruik een echte telefoon.");
