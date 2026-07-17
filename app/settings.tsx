@@ -33,11 +33,14 @@ export default function SettingsScreen() {
 
   // Zorg scenario states
   const [requireScan, setRequireScan] = useState(true);
-  const [volumeLocked, setVolumeLocked] = useState(false); // NIEUW
-  const [volume, setVolume] = useState(50); // NIEUW
+  const [volumeLocked, setVolumeLocked] = useState(false);
+  const [volume, setVolume] = useState(50);
 
   // Nieuwe state voor de demo camera override
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
+
+  // Nieuwe state: Vergrendel contactgegevens
+  const [contactLocked, setContactLocked] = useState(false);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
   const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
@@ -66,6 +69,12 @@ export default function SettingsScreen() {
       );
       const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
 
+      // Laden van de contact lock state
+      const savedContactLock = await AsyncStorage.getItem("CONTACT_LOCKED");
+      if (savedContactLock !== null) {
+        setContactLocked(savedContactLock === "true");
+      }
+
       if (savedScan !== null) setRequireScan(savedScan === "true");
       if (savedCamAlways !== null)
         setCameraAlwaysEnabled(savedCamAlways === "true");
@@ -77,7 +86,7 @@ export default function SettingsScreen() {
 
       const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
       if (savedVolume !== null) {
-        setVolume(parseInt(savedVolume)); // Set the slider to the saved value
+        setVolume(parseInt(savedVolume));
       }
     };
     load();
@@ -129,18 +138,21 @@ export default function SettingsScreen() {
     await AsyncStorage.setItem("REQUIRE_SCAN", value.toString());
   };
 
-  // NIEUW: Functie om volume lock op te slaan
   const toggleVolumeLock = async (value: boolean) => {
     setVolumeLocked(value);
     await AsyncStorage.setItem("VOLUME_LOCKED", value.toString());
   };
 
-  // NIEUW: Functie om volume naar backend te sturen
+  // Toggle contactgegevens vergrendelen
+  const toggleContactLock = async (value: boolean) => {
+    setContactLocked(value);
+    await AsyncStorage.setItem("CONTACT_LOCKED", value.toString());
+  };
+
   const handleVolumeChange = async (value: number) => {
     const roundedVolume = Math.round(value);
     setVolume(roundedVolume);
 
-    // NIEUW: Sla het volume lokaal op in de app
     await AsyncStorage.setItem("MINO_VOLUME", roundedVolume.toString());
 
     if (!url) return;
@@ -289,7 +301,134 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* NIEUW: AUDIO & VOLUME (Zichtbaar voor iedereen, maar disableable voor patiënt) */}
+        {/* MANTELZORGER CONTACTGEGEVENS (Zichtbaar voor iedereen, beveiligd voor patiënt) */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>MANTELZORGER CONTACTGEGEVENS</Text>
+
+          <View style={styles.card}>
+            <Text style={styles.label}>Naam</Text>
+            <View style={styles.inputRow}>
+              <Ionicons name="person-outline" size={20} color="#666" />
+              <TextInput
+                style={styles.input}
+                value={contactName}
+                onChangeText={setContactName}
+                placeholder="Naam mantelzorger"
+                placeholderTextColor="#444"
+                editable={!(role === "patient" && contactLocked)}
+              />
+            </View>
+
+            <Text style={styles.label}>Relatie</Text>
+            <View style={styles.inputRow}>
+              <Ionicons name="people-outline" size={20} color="#666" />
+              <TextInput
+                style={styles.input}
+                value={contactRelation}
+                onChangeText={setContactRelation}
+                placeholder="Bijv. Dochter"
+                placeholderTextColor="#444"
+                editable={!(role === "patient" && contactLocked)}
+              />
+            </View>
+
+            <Text style={styles.label}>Telefoonnummer</Text>
+            <View style={styles.inputRow}>
+              <Ionicons name="call-outline" size={20} color="#666" />
+              <TextInput
+                style={styles.input}
+                value={contactPhone}
+                onChangeText={handlePhoneChange}
+                placeholder="0470123456"
+                placeholderTextColor="#444"
+                keyboardType="phone-pad"
+                editable={!(role === "patient" && contactLocked)}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.actionBtn,
+                { marginTop: 8 },
+                role === "patient" && contactLocked && { opacity: 0.5 },
+              ]}
+              disabled={role === "patient" && contactLocked}
+              onPress={saveContact}
+            >
+              <Text style={styles.actionBtnText}>CONTACTGEGEVENS OPSLAAN</Text>
+            </TouchableOpacity>
+
+            {/* Melding als gegevens voor patiënt vergrendeld zijn */}
+            {role === "patient" && contactLocked && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginTop: 12,
+                }}
+              >
+                <Ionicons
+                  name="lock-closed"
+                  size={14}
+                  color="#ffaa00"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={{ color: "#ffaa00", fontSize: 12 }}>
+                  Contactgegevens zijn vergrendeld door de mantelzorger.
+                </Text>
+              </View>
+            )}
+
+            {/* Mantelzorger-specifieke extra melding (Pushnotificaties) */}
+            {role === "mantelzorger" && (
+              <>
+                <View style={styles.divider} />
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: "rgba(16,185,129,0.12)",
+                    borderRadius: 10,
+                    padding: 12,
+                  }}
+                >
+                  <Ionicons
+                    name="notifications-circle"
+                    size={28}
+                    color="#10b981"
+                  />
+
+                  <View style={{ marginLeft: 12, flex: 1 }}>
+                    <Text
+                      style={{
+                        color: "white",
+                        fontWeight: "600",
+                        fontSize: 15,
+                      }}
+                    >
+                      Dit toestel ontvangt noodmeldingen
+                    </Text>
+
+                    <Text
+                      style={{
+                        color: "#9ca3af",
+                        fontSize: 12,
+                        marginTop: 2,
+                      }}
+                    >
+                      Geregistreerd als mantelzorger voor pushnotificaties.
+                    </Text>
+                  </View>
+
+                  <Ionicons name="checkmark-circle" size={24} color="#10b981" />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+
+        {/* AUDIO & VOLUME */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>AUDIO & VOLUME</Text>
           <View style={styles.card}>
@@ -312,7 +451,6 @@ export default function SettingsScreen() {
                 value={volume}
                 onValueChange={(val) => setVolume(val)}
                 onSlidingComplete={handleVolumeChange}
-                // Pas kleuren aan als het vergrendeld is
                 minimumTrackTintColor={
                   role === "patient" && volumeLocked ? "#444" : "#007AFF"
                 }
@@ -320,7 +458,6 @@ export default function SettingsScreen() {
                 thumbTintColor={
                   role === "patient" && volumeLocked ? "#666" : "white"
                 }
-                // Disable de slider voor de patiënt als de lock aan staat
                 disabled={role === "patient" && volumeLocked}
               />
               {role === "patient" && volumeLocked && (
@@ -347,16 +484,14 @@ export default function SettingsScreen() {
         </View>
 
         {/* CONNECTIVITEIT */}
-        {/* CONNECTIVITEIT */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ROBOT CONNECTIVITEIT</Text>
 
           <View style={styles.card}>
-            {/* STATUS & BATTERIJ DASHBOARD (Nu ín de kaart) */}
             {url ? (
               <View
                 style={{
-                  backgroundColor: "rgba(0,0,0,0.2)", // Subtiele diepte
+                  backgroundColor: "rgba(0,0,0,0.2)",
                   borderRadius: 8,
                   padding: 14,
                   marginBottom: 16,
@@ -364,13 +499,12 @@ export default function SettingsScreen() {
                   borderColor: "rgba(255,255,255,0.03)",
                 }}
               >
-                {/* Systeemstatus */}
                 <View
                   style={{
                     flexDirection: "row",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginBottom: 12, // Ruimte tussen status en batterij
+                    marginBottom: 12,
                   }}
                 >
                   <View
@@ -413,7 +547,7 @@ export default function SettingsScreen() {
                         color: robotOnline ? "#3cdc78" : "#ff4444",
                         fontWeight: "bold",
                         fontSize: 14,
-                        letterSpacing: 1, // Maakt uppercase tekst strakker
+                        letterSpacing: 1,
                       }}
                     >
                       {robotOnline ? "ONLINE" : "OFFLINE"}
@@ -421,7 +555,6 @@ export default function SettingsScreen() {
                   </View>
                 </View>
 
-                {/* Batterij */}
                 <View
                   style={{
                     flexDirection: "row",
@@ -452,7 +585,6 @@ export default function SettingsScreen() {
 
                   <Text
                     style={{
-                      // Kleur rood als batterij 20% of lager is, anders wit
                       color:
                         batteryPercentage !== null && batteryPercentage <= 20
                           ? "#ff4444"
@@ -465,7 +597,6 @@ export default function SettingsScreen() {
                       ? `${batteryPercentage}%`
                       : "--%"}
 
-                    {/* Voltage in een zachtere kleur zodat het percentage de focus krijgt */}
                     <Text
                       style={{
                         color: "#666",
@@ -482,7 +613,6 @@ export default function SettingsScreen() {
               </View>
             ) : null}
 
-            {/* IP INPUT & KNOP */}
             <View style={styles.inputRow}>
               <Ionicons name="globe-outline" size={20} color="#666" />
               <TextInput
@@ -509,7 +639,7 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* MANTELZORGER SPECIFIEK */}
+        {/* ADAPTIEVE ZORG - Enkel voor Mantelzorger */}
         {role === "mantelzorger" && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>ADAPTIEVE ZORG (PATIËNT)</Text>
@@ -517,36 +647,16 @@ export default function SettingsScreen() {
               <View style={styles.switchRow}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.switchTitle}>
-                    Zelfstandig Voorraad Beheer
+                    Vergrendel mantelzorgergegevens
                   </Text>
                   <Text style={styles.switchSub}>
-                    De patiënt kan barcodes scannen en zo nieuwe doosjes
-                    medicatie toevoegen of de voorraad bijwerken. Zet dit uit
-                    bij vergevorderde dementie.
+                    Voorkom dat de patiënt de contactgegevens van de
+                    mantelzorger wijzigt.
                   </Text>
                 </View>
                 <Switch
-                  value={requireScan}
-                  onValueChange={toggleRequireScan}
-                  trackColor={{ false: "#333", true: "#10b981" }}
-                  thumbColor="white"
-                />
-              </View>
-
-              <View style={styles.divider} />
-
-              {/* NIEUW: Volume lock switch voor mantelzorger */}
-              <View style={styles.switchRow}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={styles.switchTitle}>Vergrendel Volume</Text>
-                  <Text style={styles.switchSub}>
-                    Blokkeer de volume-slider voor de patiënt om onbedoeld
-                    geluidsoverlast of overprikkeling te voorkomen.
-                  </Text>
-                </View>
-                <Switch
-                  value={volumeLocked}
-                  onValueChange={toggleVolumeLock}
+                  value={contactLocked}
+                  onValueChange={toggleContactLock}
                   trackColor={{ false: "#333", true: "#ffaa00" }}
                   thumbColor="white"
                 />
@@ -756,7 +866,6 @@ const styles = StyleSheet.create({
   },
   card: { backgroundColor: "#1c1c1e", borderRadius: 12, padding: 16 },
 
-  // --- NIEUWE STYLES VOOR DE ACCOUNT SWITCHER ---
   accountRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -782,7 +891,6 @@ const styles = StyleSheet.create({
     color: "#a1a1aa",
     fontSize: 16,
   },
-  // ----------------------------------------------
 
   inputRow: {
     flexDirection: "row",
@@ -841,7 +949,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  // MODAL STYLES
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.85)",
