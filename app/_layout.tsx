@@ -16,12 +16,10 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: "#09090b" },
         }}
       >
-        {/* Role Selection Screen */}
+        {/* Launcher Screen */}
         <Stack.Screen name="index" options={{ headerShown: false }} />
-
-        {/* The Tabs (Today, Medications, Camera) - Hide header because tabs have their own header */}
+        <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-
         <Stack.Screen
           name="settings"
           options={{
