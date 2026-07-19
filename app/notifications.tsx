@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
   FlatList,
+  StyleSheet,
+  Text,
   TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons"; // 1. DEZE IMPORT WAS ER NIET
 import { supabase } from "../lib/supabase";
 
 type Notification = {
@@ -98,15 +99,27 @@ export default function NotificationsScreen() {
   const getTypeConfig = (type: string | undefined, originalTitle: string) => {
     switch (type) {
       case "emergency":
-        return { icon: "🔴", title: "Noodsituatie" };
+        return {
+          iconName: "alert-circle",
+          iconColor: "#ef4444",
+          title: "Noodsituatie",
+        }; // Rood
       case "medication":
-        return { icon: "💊", title: "Medicatie" };
+        return { iconName: "medkit", iconColor: "#3b82f6", title: "Medicatie" }; // Blauw
       case "battery":
-        return { icon: "🔋", title: "Batterij" };
+        return {
+          iconName: "battery-dead",
+          iconColor: "#f59e0b",
+          title: "Batterij",
+        }; // Oranje
       case "stock":
-        return { icon: "📦", title: "Voorraad" };
+        return { iconName: "cube", iconColor: "#10b981", title: "Voorraad" }; // Groen
       default:
-        return { icon: "🔔", title: originalTitle || "Melding" };
+        return {
+          iconName: "notifications",
+          iconColor: "#a1a1aa",
+          title: originalTitle || "Melding",
+        }; // Grijs
     }
   };
 
@@ -151,9 +164,13 @@ export default function NotificationsScreen() {
                   : "rgba(255, 68, 68, 0.3)",
               }}
             >
-              <Text style={{ fontSize: 24, marginRight: 16, marginTop: 2 }}>
-                {config.icon}
-              </Text>
+              {/* 2. HIER STOND <Text>, NU IS HET DE ECHTE IONICONS COMPONENT */}
+              <Ionicons
+                name={config.iconName as any}
+                size={26}
+                color={config.iconColor}
+                style={{ marginRight: 16, marginTop: 2 }}
+              />
 
               <View style={{ flex: 1 }}>
                 <Text
