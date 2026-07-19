@@ -22,7 +22,45 @@ export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   useEffect(() => {
+    // 1. Haal de bestaande lijst op bij het laden
     loadNotifications();
+
+    // 2. REALTIME LISTENER: Luister naar nieuwe gebeurtenissen
+    const channel = supabase
+      .channel("public:notifications_list")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications" },
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            // Nieuwe melding? Zet hem direct bovenaan de lijst!
+            const newNotification = payload.new as Notification;
+            setNotifications((prev) => [newNotification, ...prev]);
+          } else if (payload.eventType === "UPDATE") {
+            // Melding gewijzigd? (bijv. in een andere sessie op gelezen gezet)
+            const updatedNotification = payload.new as Notification;
+            setNotifications((prev) =>
+              prev.map((notif) =>
+                notif.id === updatedNotification.id
+                  ? updatedNotification
+                  : notif,
+              ),
+            );
+          } else if (payload.eventType === "DELETE") {
+            // Melding verwijderd in de database? Haal hem uit de lijst
+            const deletedNotification = payload.old as Notification;
+            setNotifications((prev) =>
+              prev.filter((notif) => notif.id !== deletedNotification.id),
+            );
+          }
+        },
+      )
+      .subscribe();
+
+    // Cleanup als het scherm wordt afgesloten
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadNotifications = async () => {
@@ -39,16 +77,14 @@ export default function NotificationsScreen() {
     setNotifications(data ?? []);
   };
 
-  // Functie om de melding als gelezen te markeren
   const markAsRead = async (id: string, isRead: boolean) => {
-    if (isRead) return; // Als het al gelezen is, hoeven we niks te doen
+    if (isRead) return;
 
-    // 1. Optimistische UI update (direct de bol verbergen voor een snelle app-ervaring)
+    // Optimistische UI update (direct de bol verbergen voor een snelle app-ervaring)
     setNotifications((prev) =>
       prev.map((notif) => (notif.id === id ? { ...notif, read: true } : notif)),
     );
 
-    // 2. Database updaten
     const { error } = await supabase
       .from("notifications")
       .update({ read: true })
@@ -59,7 +95,6 @@ export default function NotificationsScreen() {
     }
   };
 
-  // Helper om icoon en dynamische titel te bepalen op basis van type
   const getTypeConfig = (type: string | undefined, originalTitle: string) => {
     switch (type) {
       case "emergency":
@@ -75,7 +110,6 @@ export default function NotificationsScreen() {
     }
   };
 
-  // Helper om de datum te formatteren
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);
     const dateOptions: Intl.DateTimeFormatOptions = {
@@ -181,7 +215,6 @@ export default function NotificationsScreen() {
             >
               Nog geen meldingen
             </Text>
-
             <Text
               style={{
                 color: "#a1a1aa",
@@ -203,9 +236,5 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#09090b",
     padding: 20,
-  },
-  subtitle: {
-    color: "#a1a1aa",
-    fontSize: 16,
   },
 });
