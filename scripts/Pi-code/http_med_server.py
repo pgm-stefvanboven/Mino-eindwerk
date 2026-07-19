@@ -6,6 +6,8 @@ import struct
 import threading
 import datetime
 import subprocess
+from supabase import create_client
+import requests
 
 from Led import Led
 from audio_player import speak, set_buzzer_fallback
@@ -18,6 +20,15 @@ CORS(app)
 ROBOT_IP = "127.0.0.1"
 CMD_PORT = 5000
 VIDEO_PORT = 8000
+
+SUPABASE_URL = "https://euechlwdifknegdoxxfg.supabase.co"
+
+SUPABASE_KEY = "sb_publishable_z1dskcmLu-LaAeZJiJXxuQ_QHyonFPX"
+
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY,
+)
 
 # DEMO: Hoe lang wachten we voor we opa herinneren?
 GRACE_PERIOD_SECONDS = 15
@@ -176,6 +187,70 @@ def monitor_loop():
 # Start achtergrond monitor
 threading.Thread(target=monitor_loop, daemon=True).start()
 
+def get_caregiver_token():
+
+    response = (
+        supabase
+        .table("caregiver_devices")
+        .select("expo_push_token")
+        .order("id", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    if response.data:
+        return response.data[0]["expo_push_token"]
+
+    return None
+
+def send_push_notification(title, body):
+
+    token = get_caregiver_token()
+
+    if not token:
+        print("Geen push token gevonden.")
+        return False
+
+    payload = {
+        "to": token,
+        "title": title,
+        "body": body,
+        "sound": "default",
+    }
+
+    try:
+        response = requests.post(
+            "https://exp.host/--/api/v2/push/send",
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+
+        print("Push response:", response.json())
+        return True
+
+    except Exception as e:
+        print("Push notificatie mislukt:", e)
+        return False
+
+def save_notification(title, body, notification_type="emergency"):
+
+    response = (
+        supabase
+        .table("notifications")
+        .insert({
+            "title": title,
+            "body": body,
+            "type": notification_type,
+        })
+        .execute()
+    )
+
+    return response
+
 # =========================================================
 # API ENDPOINTS
 # =========================================================
@@ -250,6 +325,13 @@ def care_emergency():
         0,
         0,
     )
+
+    title = "Mino"
+    body = "Geen reactie op de medicatieherinnering. Controleer de gebruiker."
+
+    save_notification(title, body)
+
+    send_push_notification(title, body)
 
     return jsonify({"status": "ok"})
 
@@ -414,6 +496,8 @@ def notify_caregiver():
 # =========================================================
 # MAIN
 # =========================================================
+
+print("Push token:", get_caregiver_token())
 
 if __name__ == "__main__":
 

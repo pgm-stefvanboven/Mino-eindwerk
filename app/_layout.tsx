@@ -21,6 +21,12 @@ export default function RootLayout() {
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen
+          name="notifications"
+          options={{
+            title: "Meldingen",
+          }}
+        />
+        <Stack.Screen
           name="settings"
           options={{
             title: "INSTELLINGEN",

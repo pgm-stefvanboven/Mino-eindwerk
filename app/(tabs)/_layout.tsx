@@ -26,15 +26,27 @@ export default function TabLayout() {
 
         // Settings button top right
         headerRight: () => (
-          <Pressable
-            onPress={() => router.push("/settings")}
-            style={({ pressed }) => ({
-              marginRight: 15,
-              opacity: pressed ? 0.5 : 1,
-            })}
-          >
-            <Ionicons name="settings-outline" size={24} color="white" />
-          </Pressable>
+          <>
+            <Pressable
+              onPress={() => router.push("/notifications")}
+              style={({ pressed }) => ({
+                marginRight: 20,
+                opacity: pressed ? 0.5 : 1,
+              })}
+            >
+              <Ionicons name="notifications-outline" size={24} color="white" />
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push("/settings")}
+              style={({ pressed }) => ({
+                marginRight: 15,
+                opacity: pressed ? 0.5 : 1,
+              })}
+            >
+              <Ionicons name="settings-outline" size={24} color="white" />
+            </Pressable>
+          </>
         ),
       }}
     >
