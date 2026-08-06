@@ -210,10 +210,8 @@ export default function VandaagScreen() {
           fetch(`${ROBOT_API_URL}/lock_close`, {
             method: "POST",
           }).catch(() => {});
-
           return null;
         }
-
         return current;
       });
     }, 5000);
