@@ -265,7 +265,7 @@ export default function VandaagScreen() {
     setAlarmStage("reminder");
 
     // FASE 1
-    await fetch("http://10.91.88.75:5001/start_reminder", {
+    await fetch("http://10.178.148.75:5001/start_reminder", {
       method: "POST",
     });
 
@@ -273,7 +273,7 @@ export default function VandaagScreen() {
       setAlarmStage("waiting");
 
       // FASE 2
-      await fetch("http://10.91.88.75:5001/second_reminder", {
+      await fetch("http://10.178.148.75:5001/second_reminder", {
         method: "POST",
       });
     }, 5000);
@@ -285,7 +285,7 @@ export default function VandaagScreen() {
       await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
 
       // FASE 3
-      await fetch("http://10.91.88.75:5001/care_emergency", {
+      await fetch("http://10.178.148.75:5001/care_emergency", {
         method: "POST",
       });
     }, 10000);
