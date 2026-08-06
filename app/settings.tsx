@@ -39,8 +39,9 @@ export default function SettingsScreen() {
   // Nieuwe state voor de demo camera override
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
 
-  // Nieuwe state: Vergrendel contactgegevens
+  // Nieuwe state: Vergrendel contactgegevens & scannen
   const [contactLocked, setContactLocked] = useState(false);
+  const [patientScanLocked, setPatientScanLocked] = useState(false);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
   const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
@@ -69,10 +70,17 @@ export default function SettingsScreen() {
       );
       const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
 
-      // Laden van de contact lock state
+      // Laden van de lock states
       const savedContactLock = await AsyncStorage.getItem("CONTACT_LOCKED");
       if (savedContactLock !== null) {
         setContactLocked(savedContactLock === "true");
+      }
+
+      const savedPatientScanLock = await AsyncStorage.getItem(
+        "PATIENT_SCAN_LOCKED",
+      );
+      if (savedPatientScanLock !== null) {
+        setPatientScanLocked(savedPatientScanLock === "true");
       }
 
       if (savedScan !== null) setRequireScan(savedScan === "true");
@@ -147,6 +155,12 @@ export default function SettingsScreen() {
   const toggleContactLock = async (value: boolean) => {
     setContactLocked(value);
     await AsyncStorage.setItem("CONTACT_LOCKED", value.toString());
+  };
+
+  // Toggle scannen vergrendelen
+  const togglePatientScanLock = async (value: boolean) => {
+    setPatientScanLocked(value);
+    await AsyncStorage.setItem("PATIENT_SCAN_LOCKED", value.toString());
   };
 
   const handleVolumeChange = async (value: number) => {
@@ -301,7 +315,7 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* MANTELZORGER CONTACTGEGEVENS (Zichtbaar voor iedereen, beveiligd voor patiënt) */}
+        {/* MANTELZORGER CONTACTGEGEVENS */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>MANTELZORGER CONTACTGEGEVENS</Text>
 
@@ -342,6 +356,7 @@ export default function SettingsScreen() {
                 placeholder="0470123456"
                 placeholderTextColor="#444"
                 keyboardType="phone-pad"
+                maxLength={10} // <-- Oplossing bug: native limiet stopt flikkeren
                 editable={!(role === "patient" && contactLocked)}
               />
             </View>
@@ -358,7 +373,6 @@ export default function SettingsScreen() {
               <Text style={styles.actionBtnText}>CONTACTGEGEVENS OPSLAAN</Text>
             </TouchableOpacity>
 
-            {/* Melding als gegevens voor patiënt vergrendeld zijn */}
             {role === "patient" && contactLocked && (
               <View
                 style={{
@@ -379,7 +393,6 @@ export default function SettingsScreen() {
               </View>
             )}
 
-            {/* Mantelzorger-specifieke extra melding (Pushnotificaties) */}
             {role === "mantelzorger" && (
               <>
                 <View style={styles.divider} />
@@ -657,6 +670,26 @@ export default function SettingsScreen() {
                 <Switch
                   value={contactLocked}
                   onValueChange={toggleContactLock}
+                  trackColor={{ false: "#333", true: "#ffaa00" }}
+                  thumbColor="white"
+                />
+              </View>
+
+              <View style={styles.divider} />
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.switchTitle}>
+                    Vergrendel zelfstandig scannen
+                  </Text>
+                  <Text style={styles.switchSub}>
+                    Patiënt kan geen nieuwe medicatie meer scannen (medicatie
+                    innemen is een aparte functie en blijft mogelijk).
+                  </Text>
+                </View>
+                <Switch
+                  value={patientScanLocked}
+                  onValueChange={togglePatientScanLock}
                   trackColor={{ false: "#333", true: "#ffaa00" }}
                   thumbColor="white"
                 />

@@ -11,7 +11,6 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
-  Alert,
   ActivityIndicator,
   ScrollView,
 } from "react-native";
@@ -25,7 +24,7 @@ import {
   getMedications,
   saveMedications,
 } from "../../data/medications";
-import { useRole } from "../../context/RoleContext"; // 1. Haal de rol op
+import { useRole } from "../../context/RoleContext";
 
 // --- DATABASE VOOR BARCODES ---
 const BARCODE_DB: Record<
@@ -53,13 +52,13 @@ const isGibberish = (text: string) => {
 };
 
 export default function MedicijnLijstScreen() {
-  const { role } = useRole(); // Haal de huidige rol op (patient of mantelzorger)
+  const { role } = useRole();
   const [meds, setMeds] = useState<Medication[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
   const scrollViewRef = useRef<ScrollView>(null);
 
   // --- ADAPTIEVE ZORG STATE ---
-  const [allowPatientScan, setAllowPatientScan] = useState(true);
+  const [patientScanLocked, setPatientScanLocked] = useState(false);
 
   // Modals state
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -107,10 +106,10 @@ export default function MedicijnLijstScreen() {
         if (name) setCaregiverName(name);
         if (relation) setCaregiverRelation(relation);
 
-        // Lees uit of de patiënt nog mag scannen
-        const savedScan = await AsyncStorage.getItem("REQUIRE_SCAN");
-        if (savedScan !== null) {
-          setAllowPatientScan(savedScan === "true");
+        // Lees uit of de mantelzorger het scannen heeft vergrendeld
+        const savedScanLock = await AsyncStorage.getItem("PATIENT_SCAN_LOCKED");
+        if (savedScanLock !== null) {
+          setPatientScanLocked(savedScanLock === "true");
         }
       };
       loadSettings();
@@ -118,8 +117,8 @@ export default function MedicijnLijstScreen() {
   );
 
   // Bepaal of de scan-knoppen zichtbaar mogen zijn
-  // De mantelzorger mag altijd scannen. De patiënt alleen als de instelling 'true' is.
-  const canScan = role === "mantelzorger" || allowPatientScan;
+  // De mantelzorger mag altijd scannen. De patiënt alleen als het niet vergrendeld is.
+  const canScan = role === "mantelzorger" || !patientScanLocked;
 
   // --- CUSTOM ALERT HELPERS ---
   const showCustomSuccess = (title: string, msg: string) => {
@@ -651,7 +650,6 @@ export default function MedicijnLijstScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* --- MODAL 2A, 2B, 2C blijven ongewijzigd in de code hieronder voor beknoptheid --- */}
       <Modal
         animationType="fade"
         transparent={true}
