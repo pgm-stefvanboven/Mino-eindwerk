@@ -2,7 +2,7 @@ import { Tabs, useRouter, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View, Text } from "react-native";
-import { useRole } from "../../context/RoleContext"; // 1. Importeer de context (check je mappenpad!)
+import { useRole } from "../../context/RoleContext"; // 1. Importeer de context
 import { supabase } from "../../lib/supabase";
 
 export default function TabLayout() {

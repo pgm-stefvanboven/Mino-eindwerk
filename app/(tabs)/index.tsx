@@ -21,6 +21,7 @@ import {
   getMedications,
   Medication,
 } from "../../data/medications";
+import { useRole } from "../../context/RoleContext";
 
 type Task = {
   id: number;
@@ -36,6 +37,8 @@ const DEMO_MISS_LIMIT_SECONDS = 5;
 const ROBOT_API_URL = "http://10.178.148.75:5001";
 
 export default function VandaagScreen() {
+  const { role } = useRole();
+
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   const [showDemoModal, setShowDemoModal] = useState(false);
@@ -346,7 +349,7 @@ export default function VandaagScreen() {
         />
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
-          {/*  STOCK ALERT (Slimme Versie) */}
+          {/*  STOCK ALERT (Slimme Versie) */}
           {lowStockMeds.length > 0 &&
             (() => {
               // Checken: zijn er nog medicijnen die NIET gemeld zijn?
@@ -535,115 +538,119 @@ export default function VandaagScreen() {
 
           {/* TIMELINE */}
           <View style={styles.timelineContainer}>
-            {tasks.map((task, index) => {
-              const status = getTaskStatus(task);
-              let btnStyle: any = styles.btnDefault;
-              let iconName: any = "";
-              let iconColor = "#fff";
-              let isDisabled = true;
-              let btnText = "";
-              let textColor = "white";
+            {tasks
+              .filter(
+                (task) => !(role === "mantelzorger" && task.medId === "6"),
+              )
+              .map((task, index) => {
+                const status = getTaskStatus(task);
+                let btnStyle: any = styles.btnDefault;
+                let iconName: any = "";
+                let iconColor = "#fff";
+                let isDisabled = true;
+                let btnText = "";
+                let textColor = "white";
 
-              switch (status) {
-                case "TAKEN":
-                  btnStyle = styles.btnTaken;
-                  btnText = "OK";
-                  iconName = "checkmark";
-                  isDisabled = true;
-                  break;
-                case "ACTIONABLE":
+                switch (status) {
+                  case "TAKEN":
+                    btnStyle = styles.btnTaken;
+                    btnText = "OK";
+                    iconName = "checkmark";
+                    isDisabled = true;
+                    break;
+                  case "ACTIONABLE":
+                    btnStyle = styles.btnActive;
+                    btnText = "NEEM IN";
+                    iconName = "hand-right";
+                    isDisabled = false;
+                    break;
+                  case "WAITING":
+                    btnStyle = styles.btnWaiting;
+                    btnText = task.time;
+                    iconName = "time";
+                    textColor = "#666";
+                    isDisabled = true;
+                    break;
+                  case "MISSED_TODAY":
+                  case "MISSED_HISTORIC":
+                    btnStyle = styles.btnMissed;
+                    btnText = "GEMIST";
+                    iconName = "close";
+                    iconColor = "#ff4444";
+                    isDisabled = true;
+                    break;
+                  case "FUTURE_DAY":
+                    btnStyle = styles.btnFuture;
+                    btnText = task.time;
+                    iconName = "calendar";
+                    iconColor = "#c084fc";
+                    textColor = "#e9d5ff";
+                    isDisabled = true;
+                    break;
+                }
+
+                if (takingMedication === task.id) {
                   btnStyle = styles.btnActive;
-                  btnText = "NEEM IN";
-                  iconName = "hand-right";
+                  btnText = "GENOMEN";
+                  iconName = "checkmark-circle";
+                  iconColor = "#fff";
                   isDisabled = false;
-                  break;
-                case "WAITING":
-                  btnStyle = styles.btnWaiting;
-                  btnText = task.time;
-                  iconName = "time";
-                  textColor = "#666";
-                  isDisabled = true;
-                  break;
-                case "MISSED_TODAY":
-                case "MISSED_HISTORIC":
-                  btnStyle = styles.btnMissed;
-                  btnText = "GEMIST";
-                  iconName = "close";
-                  iconColor = "#ff4444";
-                  isDisabled = true;
-                  break;
-                case "FUTURE_DAY":
-                  btnStyle = styles.btnFuture;
-                  btnText = task.time;
-                  iconName = "calendar";
-                  iconColor = "#c084fc";
-                  textColor = "#e9d5ff";
-                  isDisabled = true;
-                  break;
-              }
+                }
 
-              if (takingMedication === task.id) {
-                btnStyle = styles.btnActive;
-                btnText = "GENOMEN";
-                iconName = "checkmark-circle";
-                iconColor = "#fff";
-                isDisabled = false;
-              }
-
-              return (
-                <View key={task.id} style={styles.compactCard}>
-                  <View style={styles.timelineSidebar}>
-                    <View
-                      style={[
-                        styles.dot,
-                        status === "TAKEN" && styles.dotGreen,
-                        status === "ACTIONABLE" && styles.dotBlue,
-                        status.includes("MISSED") && styles.dotRed,
-                      ]}
-                    />
-                    {index < tasks.length - 1 && <View style={styles.line} />}
-                  </View>
-                  <View style={styles.compactContent}>
-                    <View style={{ flex: 1 }}>
-                      <Text
+                return (
+                  <View key={task.id} style={styles.compactCard}>
+                    <View style={styles.timelineSidebar}>
+                      <View
                         style={[
-                          styles.timeText,
-                          status === "ACTIONABLE" && { color: "#00f0ff" },
-                          status.includes("MISSED") && { color: "#ff4444" },
+                          styles.dot,
+                          status === "TAKEN" && styles.dotGreen,
+                          status === "ACTIONABLE" && styles.dotBlue,
+                          status.includes("MISSED") && styles.dotRed,
                         ]}
-                      >
-                        {task.time}
-                      </Text>
-                      <Text style={styles.nameText}>{task.name}</Text>
+                      />
+                      {index < tasks.length - 1 && <View style={styles.line} />}
                     </View>
-                    <TouchableOpacity
-                      disabled={isDisabled}
-                      onPress={() =>
-                        takingMedication === task.id
-                          ? finishMedication(task.id)
-                          : confirmMedication(task.id)
-                      }
-                      style={[styles.compactBtn, btnStyle]}
-                    >
-                      {status === "WAITING" ||
-                      status === "FUTURE_DAY" ? null : (
-                        <Ionicons
-                          name={iconName}
-                          size={16}
-                          color={iconColor}
-                          style={{ marginRight: 4 }}
-                        />
-                      )}
-                      <Text
-                        style={[styles.compactBtnText, { color: textColor }]}
+                    <View style={styles.compactContent}>
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.timeText,
+                            status === "ACTIONABLE" && { color: "#00f0ff" },
+                            status.includes("MISSED") && { color: "#ff4444" },
+                          ]}
+                        >
+                          {task.time}
+                        </Text>
+                        <Text style={styles.nameText}>{task.name}</Text>
+                      </View>
+                      <TouchableOpacity
+                        disabled={isDisabled}
+                        onPress={() =>
+                          takingMedication === task.id
+                            ? finishMedication(task.id)
+                            : confirmMedication(task.id)
+                        }
+                        style={[styles.compactBtn, btnStyle]}
                       >
-                        {btnText}
-                      </Text>
-                    </TouchableOpacity>
+                        {status === "WAITING" ||
+                        status === "FUTURE_DAY" ? null : (
+                          <Ionicons
+                            name={iconName}
+                            size={16}
+                            color={iconColor}
+                            style={{ marginRight: 4 }}
+                          />
+                        )}
+                        <Text
+                          style={[styles.compactBtnText, { color: textColor }]}
+                        >
+                          {btnText}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
-              );
-            })}
+                );
+              })}
           </View>
 
           {isToday(selectedDate) && (

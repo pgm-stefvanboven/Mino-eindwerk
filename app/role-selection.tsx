@@ -14,7 +14,7 @@ export default function RoleSelectionScreen() {
       await registerCaregiver("Mantelzorger");
     }
 
-    setRole(selectedRole);
+    await setRole(selectedRole);
 
     router.replace("/(tabs)");
   };
