@@ -20,6 +20,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRole } from "../context/RoleContext";
 import { getPiBaseUrl, Pi, setPiBaseUrl } from "../services/pi";
+import { registerCaregiver, unregisterCaregiver } from "../services/pushNotifications";
 
 export default function SettingsScreen() {
   const { role, setRole } = useRole();
@@ -56,6 +57,15 @@ export default function SettingsScreen() {
     type: "success",
     onConfirm: null as null | (() => void),
   });
+
+  const handleRoleSwitch = async (newRole: "patient" | "mantelzorger") => {
+    if (newRole === "mantelzorger") {
+      await registerCaregiver("Mantelzorger");
+    } else {
+      await unregisterCaregiver();
+    }
+    await setRole(newRole);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -259,7 +269,7 @@ export default function SettingsScreen() {
           <View style={styles.card}>
             <TouchableOpacity
               style={styles.accountRow}
-              onPress={() => setRole("patient")}
+              onPress={() => handleRoleSwitch("patient")}
             >
               <View
                 style={[
@@ -284,7 +294,7 @@ export default function SettingsScreen() {
 
             <TouchableOpacity
               style={[styles.accountRow, { borderBottomWidth: 0 }]}
-              onPress={() => setRole("mantelzorger")}
+              onPress={() => handleRoleSwitch("mantelzorger")}
             >
               <View
                 style={[

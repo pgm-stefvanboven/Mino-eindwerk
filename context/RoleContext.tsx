@@ -1,5 +1,5 @@
-import React, { createContext, useState, useContext, ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { createContext, ReactNode, useContext, useState } from "react";
 
 // 1. We define the two possible roles (and null for when no choice has been made yet)
 export type Role = "patient" | "mantelzorger" | null;
@@ -22,11 +22,12 @@ export const RoleProvider = ({ children }: { children: ReactNode }) => {
   const setRole = async (newRole: Role) => {
     setRoleState(newRole);
 
-    if (newRole) {
-      await AsyncStorage.setItem("ROLE", newRole);
-    } else {
-      await AsyncStorage.removeItem("ROLE");
+    if (newRole === null) {
+      await AsyncStorage.removeItem("USER_ROLE");
+      return;
     }
+
+    await AsyncStorage.setItem("USER_ROLE", newRole);
   };
 
   React.useEffect(() => {

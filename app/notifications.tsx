@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useState } from "react";
 import {
   FlatList,
@@ -7,8 +8,9 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons"; // 1. DEZE IMPORT WAS ER NIET
+import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
+import { useRole } from "../context/RoleContext";
 
 type Notification = {
   id: string;
@@ -21,12 +23,14 @@ type Notification = {
 
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const { role } = useRole(); // Retrieve the current role
 
   useEffect(() => {
-    // 1. Haal de bestaande lijst op bij het laden
+    // Stop immediately if the user is a patient
+    if (role === "patient") return;
+
     loadNotifications();
 
-    // 2. REALTIME LISTENER: Luister naar nieuwe gebeurtenissen
     const channel = supabase
       .channel("public:notifications_list")
       .on(
@@ -34,11 +38,11 @@ export default function NotificationsScreen() {
         { event: "*", schema: "public", table: "notifications" },
         (payload) => {
           if (payload.eventType === "INSERT") {
-            // Nieuwe melding? Zet hem direct bovenaan de lijst!
+            // New report? Put it right at the top of the list
             const newNotification = payload.new as Notification;
             setNotifications((prev) => [newNotification, ...prev]);
           } else if (payload.eventType === "UPDATE") {
-            // Melding gewijzigd? (bijv. in een andere sessie op gelezen gezet)
+            // Notification updated? (e.g., in another session marked as read)
             const updatedNotification = payload.new as Notification;
             setNotifications((prev) =>
               prev.map((notif) =>
@@ -48,7 +52,7 @@ export default function NotificationsScreen() {
               ),
             );
           } else if (payload.eventType === "DELETE") {
-            // Melding verwijderd in de database? Haal hem uit de lijst
+            // Notification deleted in the database? Remove it from the list
             const deletedNotification = payload.old as Notification;
             setNotifications((prev) =>
               prev.filter((notif) => notif.id !== deletedNotification.id),
@@ -139,6 +143,33 @@ export default function NotificationsScreen() {
     return `${datePart} • ${timePart}`;
   };
 
+  if (role === "patient") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 20,
+          }}
+        >
+          <Ionicons name="shield-half" size={48} color="#3b82f6" />
+          <Text
+            style={{
+              color: "white",
+              fontSize: 18,
+              marginTop: 16,
+              textAlign: "center",
+            }}
+          >
+            Dit scherm is enkel toegankelijk voor de mantelzorger.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
@@ -164,7 +195,6 @@ export default function NotificationsScreen() {
                   : "rgba(255, 68, 68, 0.3)",
               }}
             >
-              {/* 2. HIER STOND <Text>, NU IS HET DE ECHTE IONICONS COMPONENT */}
               <Ionicons
                 name={config.iconName as any}
                 size={26}

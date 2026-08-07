@@ -216,6 +216,9 @@ def send_push_notification(title, body):
         "title": title,
         "body": body,
         "sound": "default",
+        "data": {
+            "url": "/notifications"
+        }
     }
 
     try:

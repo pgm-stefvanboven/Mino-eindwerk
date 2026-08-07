@@ -3,7 +3,10 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useRole } from "../context/RoleContext";
-import { registerCaregiver } from "../services/pushNotifications";
+import {
+  registerCaregiver,
+  unregisterCaregiver,
+} from "../services/pushNotifications";
 
 export default function RoleSelectionScreen() {
   const router = useRouter();
@@ -12,10 +15,12 @@ export default function RoleSelectionScreen() {
   const handleSelectRole = async (selectedRole: "patient" | "mantelzorger") => {
     if (selectedRole === "mantelzorger") {
       await registerCaregiver("Mantelzorger");
+    } else {
+      // Verwijder het token uit Supabase voor de patiënt
+      await unregisterCaregiver();
     }
 
     await setRole(selectedRole);
-
     router.replace("/(tabs)");
   };
 
