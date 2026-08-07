@@ -73,15 +73,17 @@ export default function SettingsScreen() {
         setPatientScanLocked(data.scan_locked);
         setCameraAlwaysEnabled(data.camera_always_enabled);
 
-        // Contactgegevens inladen vanuit Supabase
         if (data.contact_name) setContactName(data.contact_name);
         if (data.contact_relation) setContactRelation(data.contact_relation);
         if (data.contact_phone) setContactPhone(data.contact_phone);
 
-        // Als er al data is, zet dan de velden op slot
         if (data.contact_name || data.contact_phone) {
           setIsEditingContact(false);
         }
+
+        // Haal volume data op
+        if (data.mino_volume !== null) setVolume(data.mino_volume);
+        if (data.volume_locked !== null) setVolumeLocked(data.volume_locked);
       }
     };
 
@@ -102,13 +104,18 @@ export default function SettingsScreen() {
           if (updatedSettings.camera_always_enabled !== undefined)
             setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
 
-          // Realtime luisteren naar wijzigingen in contactgegevens
           if (updatedSettings.contact_name !== undefined)
             setContactName(updatedSettings.contact_name);
           if (updatedSettings.contact_relation !== undefined)
             setContactRelation(updatedSettings.contact_relation);
           if (updatedSettings.contact_phone !== undefined)
             setContactPhone(updatedSettings.contact_phone);
+
+          // Realtime luisteren naar volume wijzigingen
+          if (updatedSettings.mino_volume !== undefined)
+            setVolume(updatedSettings.mino_volume);
+          if (updatedSettings.volume_locked !== undefined)
+            setVolumeLocked(updatedSettings.volume_locked);
         },
       )
       .subscribe();
@@ -127,12 +134,6 @@ export default function SettingsScreen() {
       if (savedUrl) {
         setIsEditingUrl(false);
       }
-
-      const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
-      const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
-
-      if (savedVolumeLock !== null) setVolumeLocked(savedVolumeLock === "true");
-      if (savedVolume !== null) setVolume(parseInt(savedVolume));
     };
     loadLocal();
   }, []);
@@ -198,7 +199,13 @@ export default function SettingsScreen() {
   const handleVolumeChange = async (value: number) => {
     const roundedVolume = Math.round(value);
     setVolume(roundedVolume);
-    await AsyncStorage.setItem("MINO_VOLUME", roundedVolume.toString());
+
+    // NIEUW: Update Supabase in plaats van AsyncStorage
+    await supabase
+      .from("shared_settings")
+      .update({ mino_volume: roundedVolume })
+      .eq("id", 1);
+
     if (!url) return;
     try {
       await fetch(`${url}/api/volume`, {
@@ -209,6 +216,15 @@ export default function SettingsScreen() {
     } catch (error) {
       console.error("Fout bij aanpassen volume:", error);
     }
+  };
+
+  // Voeg deze functie toe net onder je andere toggle-functies (zoals toggleContactLock)
+  const toggleVolumeLock = async (value: boolean) => {
+    setVolumeLocked(value);
+    await supabase
+      .from("shared_settings")
+      .update({ volume_locked: value })
+      .eq("id", 1);
   };
 
   // Updates naar Supabase in plaats van AsyncStorage
@@ -785,6 +801,24 @@ export default function SettingsScreen() {
                 <Switch
                   value={patientScanLocked}
                   onValueChange={togglePatientScanLock}
+                  trackColor={{ false: "#333", true: "#ffaa00" }}
+                  thumbColor="white"
+                />
+              </View>
+
+              <View style={styles.divider} />
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.switchTitle}>Vergrendel volume</Text>
+                  <Text style={styles.switchSub}>
+                    Patiënt kan het volume van de Mino robot niet meer
+                    aanpassen.
+                  </Text>
+                </View>
+                <Switch
+                  value={volumeLocked}
+                  onValueChange={toggleVolumeLock}
                   trackColor={{ false: "#333", true: "#ffaa00" }}
                   thumbColor="white"
                 />
