@@ -645,41 +645,105 @@ export default function SettingsScreen() {
               </View>
             ) : null}
 
-            <View style={[styles.inputRow, !isEditingUrl && { opacity: 0.7 }]}>
-              <Ionicons name="globe-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="http://192.168..."
-                placeholderTextColor="#444"
-                autoCapitalize="none"
-                editable={isEditingUrl}
-              />
-            </View>
+            {(() => {
+              const isUrlLockedForPatient = role === "patient";
+              const canEditUrl = isEditingUrl && !isUrlLockedForPatient;
 
-            {!isEditingUrl ? (
-              <TouchableOpacity
-                style={[styles.actionBtn, { backgroundColor: "#333" }]}
-                onPress={() => setIsEditingUrl(true)}
-              >
-                <Text style={styles.actionBtnText}>IP ADRES BEWERKEN</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={testConnection}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={styles.actionBtnText}>
-                    {url ? "VERBINDING BIJWERKEN" : "TEST VERBINDING"}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            )}
+              return (
+                <>
+                  <View
+                    style={[styles.inputRow, !canEditUrl && { opacity: 0.7 }]}
+                  >
+                    <Ionicons name="globe-outline" size={20} color="#666" />
+                    <TextInput
+                      style={styles.input}
+                      value={url}
+                      onChangeText={setUrl}
+                      placeholder="http://192.168..."
+                      placeholderTextColor="#444"
+                      autoCapitalize="none"
+                      editable={canEditUrl}
+                    />
+                  </View>
+
+                  {isUrlLockedForPatient ? (
+                    // PATIËNT ZIET ENKEL DE TEST KNOP
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={testConnection}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="white" />
+                      ) : (
+                        <Text style={styles.actionBtnText}>
+                          TEST VERBINDING
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ) : // MANTELZORGER ZIET BEWERKEN OF OPSLAAN & TESTEN
+                  !isEditingUrl ? (
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={[
+                          styles.actionBtn,
+                          { flex: 1, backgroundColor: "#333" },
+                        ]}
+                        onPress={() => setIsEditingUrl(true)}
+                      >
+                        <Text style={styles.actionBtnText}>BEWERKEN</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, { flex: 1 }]}
+                        onPress={testConnection}
+                        disabled={loading}
+                      >
+                        {loading ? (
+                          <ActivityIndicator color="white" />
+                        ) : (
+                          <Text style={styles.actionBtnText}>TEST</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.actionBtn}
+                      onPress={testConnection}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="white" />
+                      ) : (
+                        <Text style={styles.actionBtnText}>
+                          {url ? "OPSLAAN & TESTEN" : "TEST VERBINDING"}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  {/* WAARSCHUWING / SLOTJE VOOR DE PATIËNT */}
+                  {isUrlLockedForPatient && (
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        marginTop: 12,
+                      }}
+                    >
+                      <Ionicons
+                        name="lock-closed"
+                        size={14}
+                        color="#ffaa00"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={{ color: "#ffaa00", fontSize: 12 }}>
+                        Netwerkinstellingen worden beheerd door de mantelzorger.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              );
+            })()}
           </View>
         </View>
 
