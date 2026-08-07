@@ -34,6 +34,7 @@ export default function SettingsScreen() {
   const [volume, setVolume] = useState(50);
   const [volumeLocked, setVolumeLocked] = useState(false);
   const [isEditingContact, setIsEditingContact] = useState(true);
+  const [isEditingUrl, setIsEditingUrl] = useState(true);
 
   // SUPABASE SHARED STATES
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
@@ -122,6 +123,10 @@ export default function SettingsScreen() {
     const loadLocal = async () => {
       const savedUrl = await getPiBaseUrl();
       setUrl(savedUrl);
+
+      if (savedUrl) {
+        setIsEditingUrl(false);
+      }
 
       const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
       const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
@@ -238,6 +243,9 @@ export default function SettingsScreen() {
       await Pi.health();
       setRobotOnline(true);
       showModal("Verbonden!", "De robot is bereikbaar.", "success");
+
+      // NIEUW: Zet het veld op slot na een succesvolle verbinding
+      setIsEditingUrl(false);
     } catch (e) {
       setRobotOnline(false);
       showModal(
@@ -637,7 +645,7 @@ export default function SettingsScreen() {
               </View>
             ) : null}
 
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, !isEditingUrl && { opacity: 0.7 }]}>
               <Ionicons name="globe-outline" size={20} color="#666" />
               <TextInput
                 style={styles.input}
@@ -646,20 +654,32 @@ export default function SettingsScreen() {
                 placeholder="http://192.168..."
                 placeholderTextColor="#444"
                 autoCapitalize="none"
+                editable={isEditingUrl}
               />
             </View>
 
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={testConnection}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.actionBtnText}>TEST VERBINDING</Text>
-              )}
-            </TouchableOpacity>
+            {!isEditingUrl ? (
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#333" }]}
+                onPress={() => setIsEditingUrl(true)}
+              >
+                <Text style={styles.actionBtnText}>IP ADRES BEWERKEN</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={testConnection}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.actionBtnText}>
+                    {url ? "VERBINDING BIJWERKEN" : "TEST VERBINDING"}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
