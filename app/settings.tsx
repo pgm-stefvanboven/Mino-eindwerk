@@ -20,7 +20,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRole } from "../context/RoleContext";
 import { getPiBaseUrl, Pi, setPiBaseUrl } from "../services/pi";
-import { supabase } from "../lib/supabase"; // <-- Toegevoegd
+import { supabase } from "../lib/supabase";
 
 export default function SettingsScreen() {
   const { role } = useRole();
@@ -33,6 +33,7 @@ export default function SettingsScreen() {
   const [loading, setLoading] = useState(false);
   const [volume, setVolume] = useState(50);
   const [volumeLocked, setVolumeLocked] = useState(false);
+  const [isEditingContact, setIsEditingContact] = useState(true);
 
   // SUPABASE SHARED STATES
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
@@ -40,15 +41,21 @@ export default function SettingsScreen() {
   const [patientScanLocked, setPatientScanLocked] = useState(false);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
-  const [batteryPercentage, setBatteryPercentage] = useState<number | null>(null);
+  const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
+    null,
+  );
   const [robotOnline, setRobotOnline] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
-  const [modalConfig, setModalConfig] = useState({
+  const [modalConfig, setModalConfig] = useState<{
+    title: string;
+    message: string;
+    type: "success" | "error" | "warning";
+    onConfirm?: () => void;
+  }>({
     title: "",
     message: "",
     type: "success",
-    onConfirm: null as null | (() => void),
   });
 
   // SUPABASE REALTIME LISTENER VOOR GEDEELDE INSTELLINGEN
@@ -59,11 +66,21 @@ export default function SettingsScreen() {
         .select("*")
         .eq("id", 1)
         .single();
-        
+
       if (data && !error) {
         setContactLocked(data.contact_locked);
         setPatientScanLocked(data.scan_locked);
         setCameraAlwaysEnabled(data.camera_always_enabled);
+
+        // Contactgegevens inladen vanuit Supabase
+        if (data.contact_name) setContactName(data.contact_name);
+        if (data.contact_relation) setContactRelation(data.contact_relation);
+        if (data.contact_phone) setContactPhone(data.contact_phone);
+
+        // Als er al data is, zet dan de velden op slot
+        if (data.contact_name || data.contact_phone) {
+          setIsEditingContact(false);
+        }
       }
     };
 
@@ -76,10 +93,22 @@ export default function SettingsScreen() {
         { event: "UPDATE", schema: "public", table: "shared_settings" },
         (payload) => {
           const updatedSettings = payload.new;
-          setContactLocked(updatedSettings.contact_locked);
-          setPatientScanLocked(updatedSettings.scan_locked);
-          setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
-        }
+
+          if (updatedSettings.contact_locked !== undefined)
+            setContactLocked(updatedSettings.contact_locked);
+          if (updatedSettings.scan_locked !== undefined)
+            setPatientScanLocked(updatedSettings.scan_locked);
+          if (updatedSettings.camera_always_enabled !== undefined)
+            setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
+
+          // Realtime luisteren naar wijzigingen in contactgegevens
+          if (updatedSettings.contact_name !== undefined)
+            setContactName(updatedSettings.contact_name);
+          if (updatedSettings.contact_relation !== undefined)
+            setContactRelation(updatedSettings.contact_relation);
+          if (updatedSettings.contact_phone !== undefined)
+            setContactPhone(updatedSettings.contact_phone);
+        },
       )
       .subscribe();
 
@@ -93,17 +122,11 @@ export default function SettingsScreen() {
     const loadLocal = async () => {
       const savedUrl = await getPiBaseUrl();
       setUrl(savedUrl);
-      
-      const savedName = await AsyncStorage.getItem("CONTACT_NAME");
-      const savedRelation = await AsyncStorage.getItem("CONTACT_RELATION");
-      const savedPhone = await AsyncStorage.getItem("CONTACT_PHONE");
+
       const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
       const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
 
       if (savedVolumeLock !== null) setVolumeLocked(savedVolumeLock === "true");
-      if (savedName) setContactName(savedName);
-      if (savedRelation) setContactRelation(savedRelation);
-      if (savedPhone) setContactPhone(savedPhone);
       if (savedVolume !== null) setVolume(parseInt(savedVolume));
     };
     loadLocal();
@@ -116,7 +139,12 @@ export default function SettingsScreen() {
     return () => clearInterval(interval);
   }, [url]);
 
-  const showModal = (title: string, message: string, type: "success" | "error" | "warning", onConfirm: (() => void) | null = null) => {
+  const showModal = (
+    title: string,
+    message: string,
+    type: "success" | "error" | "warning",
+    onConfirm?: () => void,
+  ) => {
     setModalConfig({ title, message, type, onConfirm });
     setModalVisible(true);
   };
@@ -128,13 +156,38 @@ export default function SettingsScreen() {
 
   const saveContact = async () => {
     if (contactPhone.length < 9) {
-      showModal("Ongeldig Nummer", "Een telefoonnummer moet minstens 9 cijfers bevatten.", "error");
+      showModal(
+        "Ongeldig Nummer",
+        "Een telefoonnummer moet minstens 9 cijfers bevatten.",
+        "error",
+      );
       return;
     }
-    await AsyncStorage.setItem("CONTACT_NAME", contactName);
-    await AsyncStorage.setItem("CONTACT_RELATION", contactRelation);
-    await AsyncStorage.setItem("CONTACT_PHONE", contactPhone);
-    showModal("Opgeslagen", "De contactgegevens zijn succesvol bijgewerkt.", "success");
+
+    const { error } = await supabase
+      .from("shared_settings")
+      .update({
+        contact_name: contactName,
+        contact_relation: contactRelation,
+        contact_phone: contactPhone,
+      })
+      .eq("id", 1);
+
+    if (error) {
+      console.error(error);
+      showModal(
+        "Fout",
+        "Kon contactgegevens niet synchroniseren met de cloud.",
+        "error",
+      );
+    } else {
+      showModal(
+        "Opgeslagen",
+        "De contactgegevens zijn succesvol bijgewerkt.",
+        "success",
+      );
+      setIsEditingContact(false);
+    }
   };
 
   const handleVolumeChange = async (value: number) => {
@@ -153,20 +206,29 @@ export default function SettingsScreen() {
     }
   };
 
-  // NIEUW: Updates naar Supabase in plaats van AsyncStorage
+  // Updates naar Supabase in plaats van AsyncStorage
   const toggleContactLock = async (value: boolean) => {
     setContactLocked(value); // Optimistische UI update
-    await supabase.from("shared_settings").update({ contact_locked: value }).eq("id", 1);
+    await supabase
+      .from("shared_settings")
+      .update({ contact_locked: value })
+      .eq("id", 1);
   };
 
   const togglePatientScanLock = async (value: boolean) => {
     setPatientScanLocked(value); // Optimistische UI update
-    await supabase.from("shared_settings").update({ scan_locked: value }).eq("id", 1);
+    await supabase
+      .from("shared_settings")
+      .update({ scan_locked: value })
+      .eq("id", 1);
   };
 
   const toggleCameraAlwaysEnabled = async (value: boolean) => {
     setCameraAlwaysEnabled(value); // Optimistische UI update
-    await supabase.from("shared_settings").update({ camera_always_enabled: value }).eq("id", 1);
+    await supabase
+      .from("shared_settings")
+      .update({ camera_always_enabled: value })
+      .eq("id", 1);
   };
 
   const testConnection = async () => {
@@ -178,7 +240,11 @@ export default function SettingsScreen() {
       showModal("Verbonden!", "De robot is bereikbaar.", "success");
     } catch (e) {
       setRobotOnline(false);
-      showModal("Verbinding Mislukt", "Kan geen verbinding maken. Check IP en WiFi.", "error");
+      showModal(
+        "Verbinding Mislukt",
+        "Kan geen verbinding maken. Check IP en WiFi.",
+        "error",
+      );
     } finally {
       setLoading(false);
     }
@@ -198,8 +264,15 @@ export default function SettingsScreen() {
 
   const resetZorgScenario = async () => {
     // Reset de noodtoegang in Supabase
-    await supabase.from("shared_settings").update({ emergency_camera_unlocked: false }).eq("id", 1);
-    showModal("Scenario Gereset", "De noodtoegang is ingetrokken en het scenario is gereset.", "success");
+    await supabase
+      .from("shared_settings")
+      .update({ emergency_camera_unlocked: false })
+      .eq("id", 1);
+    showModal(
+      "Scenario Gereset",
+      "De noodtoegang is ingetrokken en het scenario is gereset.",
+      "success",
+    );
   };
 
   const confirmReset = () => {
@@ -209,17 +282,33 @@ export default function SettingsScreen() {
       "warning",
       async () => {
         await AsyncStorage.clear();
-        await supabase.from("shared_settings").update({
-          contact_locked: false,
-          scan_locked: false,
-          camera_always_enabled: false,
-          emergency_camera_unlocked: false
-        }).eq("id", 1);
+        await supabase
+          .from("shared_settings")
+          .update({
+            contact_locked: false,
+            scan_locked: false,
+            camera_always_enabled: false,
+            emergency_camera_unlocked: false,
+          })
+          .eq("id", 1);
         setModalVisible(false);
-        setTimeout(() => showModal("Gereset", "De app is terug naar fabrieksinstellingen.", "success"), 300);
-      }
+        setTimeout(
+          () =>
+            showModal(
+              "Gereset",
+              "De app is terug naar fabrieksinstellingen.",
+              "success",
+            ),
+          300,
+        );
+      },
     );
   };
+
+  // --- HULPVARIABELEN VOOR DE UI ---
+  const isPatientLocked = role === "patient" && contactLocked;
+  const canEdit = isEditingContact && !isPatientLocked;
+  const hasData = Boolean(contactName || contactPhone);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -232,7 +321,7 @@ export default function SettingsScreen() {
 
           <View style={styles.card}>
             <Text style={styles.label}>Naam</Text>
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, !canEdit && { opacity: 0.7 }]}>
               <Ionicons name="person-outline" size={20} color="#666" />
               <TextInput
                 style={styles.input}
@@ -240,12 +329,12 @@ export default function SettingsScreen() {
                 onChangeText={setContactName}
                 placeholder="Naam mantelzorger"
                 placeholderTextColor="#444"
-                editable={!(role === "patient" && contactLocked)}
+                editable={canEdit}
               />
             </View>
 
             <Text style={styles.label}>Relatie</Text>
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, !canEdit && { opacity: 0.7 }]}>
               <Ionicons name="people-outline" size={20} color="#666" />
               <TextInput
                 style={styles.input}
@@ -253,12 +342,12 @@ export default function SettingsScreen() {
                 onChangeText={setContactRelation}
                 placeholder="Bijv. Dochter"
                 placeholderTextColor="#444"
-                editable={!(role === "patient" && contactLocked)}
+                editable={canEdit}
               />
             </View>
 
             <Text style={styles.label}>Telefoonnummer</Text>
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, !canEdit && { opacity: 0.7 }]}>
               <Ionicons name="call-outline" size={20} color="#666" />
               <TextInput
                 style={styles.input}
@@ -267,22 +356,39 @@ export default function SettingsScreen() {
                 placeholder="0470123456"
                 placeholderTextColor="#444"
                 keyboardType="phone-pad"
-                maxLength={10} 
-                editable={!(role === "patient" && contactLocked)}
+                maxLength={10}
+                editable={canEdit}
               />
             </View>
 
-            <TouchableOpacity
-              style={[
-                styles.actionBtn,
-                { marginTop: 8 },
-                role === "patient" && contactLocked && { opacity: 0.5 },
-              ]}
-              disabled={role === "patient" && contactLocked}
-              onPress={saveContact}
-            >
-              <Text style={styles.actionBtnText}>CONTACTGEGEVENS OPSLAAN</Text>
-            </TouchableOpacity>
+            {/* KNOPPEN LOGICA */}
+            {!isEditingContact && !isPatientLocked ? (
+              <TouchableOpacity
+                style={[
+                  styles.actionBtn,
+                  { marginTop: 8, backgroundColor: "#333" },
+                ]}
+                onPress={() => setIsEditingContact(true)}
+              >
+                <Text style={styles.actionBtnText}>GEGEVENS BEWERKEN</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[
+                  styles.actionBtn,
+                  { marginTop: 8 },
+                  isPatientLocked && { opacity: 0.5 },
+                ]}
+                disabled={isPatientLocked}
+                onPress={saveContact}
+              >
+                <Text style={styles.actionBtnText}>
+                  {hasData
+                    ? "CONTACTGEGEVENS BIJWERKEN"
+                    : "CONTACTGEGEVENS OPSLAAN"}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {role === "patient" && contactLocked && (
               <View
@@ -333,13 +439,8 @@ export default function SettingsScreen() {
                     >
                       Dit toestel ontvangt noodmeldingen
                     </Text>
-
                     <Text
-                      style={{
-                        color: "#9ca3af",
-                        fontSize: 12,
-                        marginTop: 2,
-                      }}
+                      style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}
                     >
                       Geregistreerd als mantelzorger voor pushnotificaties.
                     </Text>
@@ -520,7 +621,6 @@ export default function SettingsScreen() {
                     {batteryPercentage !== null
                       ? `${batteryPercentage}%`
                       : "--%"}
-
                     <Text
                       style={{
                         color: "#666",

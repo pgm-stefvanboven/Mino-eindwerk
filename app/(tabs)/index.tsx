@@ -22,6 +22,7 @@ import {
   Medication,
 } from "../../data/medications";
 import { useRole } from "../../context/RoleContext";
+import { supabase } from "../../lib/supabase";
 
 type Task = {
   id: number;
@@ -93,15 +94,20 @@ export default function VandaagScreen() {
   const loadData = useCallback(async () => {
     setIsLoading(true);
 
-    const name = await AsyncStorage.getItem("CONTACT_NAME");
-    const relation = await AsyncStorage.getItem("CONTACT_RELATION");
-    const phone = await AsyncStorage.getItem("CONTACT_PHONE");
+    // Haal de actuele contactgegevens op uit Supabase
+    const { data: contactData, error: contactError } = await supabase
+      .from("shared_settings")
+      .select("contact_name, contact_relation, contact_phone")
+      .eq("id", 1)
+      .single();
 
-    setContact({
-      name: name || "",
-      relation: relation || "",
-      phone: phone || "",
-    });
+    if (contactData && !contactError) {
+      setContact({
+        name: contactData.contact_name || "",
+        relation: contactData.contact_relation || "",
+        phone: contactData.contact_phone || "",
+      });
+    }
 
     // 1. Check Stock (for the warning at the top)
     const currentMeds = await getMedications();

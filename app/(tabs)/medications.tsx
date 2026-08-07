@@ -100,28 +100,25 @@ export default function MedicijnLijstScreen() {
   useFocusEffect(
     useCallback(() => {
       getMedications().then(setMeds);
-
-      const loadSettings = async () => {
-        const name = await AsyncStorage.getItem("CONTACT_NAME");
-        const relation = await AsyncStorage.getItem("CONTACT_RELATION");
-        if (name) setCaregiverName(name);
-        if (relation) setCaregiverRelation(relation);
-      };
-      loadSettings();
     }, []),
   );
 
   useEffect(() => {
     // 1. Haal de initiële status op
     const fetchSharedSettings = async () => {
+      // Verander "scan_locked" naar "*" of selecteer de velden expliciet
       const { data, error } = await supabase
         .from("shared_settings")
-        .select("scan_locked")
+        .select("*")
         .eq("id", 1)
         .single();
 
       if (data && !error) {
         setPatientScanLocked(data.scan_locked);
+
+        // NIEUW: Stel de mantelzorger-gegevens direct in
+        if (data.contact_name) setCaregiverName(data.contact_name);
+        if (data.contact_relation) setCaregiverRelation(data.contact_relation);
       }
     };
 
@@ -135,9 +132,17 @@ export default function MedicijnLijstScreen() {
         { event: "UPDATE", schema: "public", table: "shared_settings" },
         (payload) => {
           const updatedSettings = payload.new;
-          // Controleer of de property bestaat in de payload
+
           if (updatedSettings.scan_locked !== undefined) {
             setPatientScanLocked(updatedSettings.scan_locked);
+          }
+
+          // NIEUW: Update contactgegevens direct als de mantelzorger ze wijzigt
+          if (updatedSettings.contact_name !== undefined) {
+            setCaregiverName(updatedSettings.contact_name);
+          }
+          if (updatedSettings.contact_relation !== undefined) {
+            setCaregiverRelation(updatedSettings.contact_relation);
           }
         },
       )
