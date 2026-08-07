@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   StyleSheet,
   TextInput,
@@ -25,6 +25,7 @@ import {
   saveMedications,
 } from "../../data/medications";
 import { useRole } from "../../context/RoleContext";
+import { supabase } from "../../lib/supabase";
 
 // --- DATABASE VOOR BARCODES ---
 const BARCODE_DB: Record<
@@ -105,16 +106,48 @@ export default function MedicijnLijstScreen() {
         const relation = await AsyncStorage.getItem("CONTACT_RELATION");
         if (name) setCaregiverName(name);
         if (relation) setCaregiverRelation(relation);
-
-        // Lees uit of de mantelzorger het scannen heeft vergrendeld
-        const savedScanLock = await AsyncStorage.getItem("PATIENT_SCAN_LOCKED");
-        if (savedScanLock !== null) {
-          setPatientScanLocked(savedScanLock === "true");
-        }
       };
       loadSettings();
     }, []),
   );
+
+  useEffect(() => {
+    // 1. Haal de initiële status op
+    const fetchSharedSettings = async () => {
+      const { data, error } = await supabase
+        .from("shared_settings")
+        .select("scan_locked")
+        .eq("id", 1)
+        .single();
+
+      if (data && !error) {
+        setPatientScanLocked(data.scan_locked);
+      }
+    };
+
+    fetchSharedSettings();
+
+    // 2. Abonneer op realtime wijzigingen
+    const channel = supabase
+      .channel("public:medicijnlijst_shared_settings")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "shared_settings" },
+        (payload) => {
+          const updatedSettings = payload.new;
+          // Controleer of de property bestaat in de payload
+          if (updatedSettings.scan_locked !== undefined) {
+            setPatientScanLocked(updatedSettings.scan_locked);
+          }
+        },
+      )
+      .subscribe();
+
+    // 3. Cleanup bij unmounten
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Bepaal of de scan-knoppen zichtbaar mogen zijn
   // De mantelzorger mag altijd scannen. De patiënt alleen als het niet vergrendeld is.

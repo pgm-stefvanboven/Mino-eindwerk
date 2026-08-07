@@ -1,4 +1,5 @@
- import React from "react";
+/* eslint-disable react-hooks/exhaustive-deps */
+import React from "react";
 import {
   View,
   Text,
@@ -6,6 +7,8 @@ import {
   Pressable,
   Platform,
   StatusBar,
+  AppState,
+  TouchableOpacity,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { Ionicons } from "@expo/vector-icons";
@@ -197,6 +200,22 @@ export default function RobotScreen() {
     setWebKey((k) => k + 1);
   };
 
+  // Functie voor ontgrendeling, wordt nu automatisch aangeroepen
+  const startCareSession = async () => {
+    setEmergencyAccess(true); // optimistic UI
+
+    await supabase
+      .from("shared_settings")
+      .update({ emergency_camera_unlocked: true })
+      .eq("id", 1);
+
+    await supabase.from("notifications").insert({
+      title: "Camera actief",
+      body: "De mantelzorger kijkt tijdelijk mee via de camera.",
+      type: "privacy",
+    });
+  };
+
   useFocusEffect(
     React.useCallback(() => {
       let isActive = true;
@@ -206,47 +225,65 @@ export default function RobotScreen() {
 
       reloadVideo();
 
-      // 1. Initialiseer en controleer Supabase statussen
-      const checkAndUnlockCamera = async () => {
-        const { data, error } = await supabase
+      // 1. Controleer de huidige status en ontgrendel automatisch als het de mantelzorger is
+      const loadStatus = async () => {
+        const { data } = await supabase
           .from("shared_settings")
-          .select("*")
+          .select("emergency_camera_unlocked, camera_always_enabled")
           .eq("id", 1)
           .single();
 
-        if (data && !error) {
-          if (isActive) {
-            setCameraAlways(data.camera_always_enabled);
-            setEmergencyAccess(data.emergency_camera_unlocked);
-          }
+        if (data && isActive) {
+          setCameraAlways(data.camera_always_enabled);
+          setEmergencyAccess(data.emergency_camera_unlocked);
 
-          // 2. Als mantelzorger het scherm opent en het is nog NIET ontgrendeld:
+          // AUTO-UNLOCK LOGICA
           if (
             role === "mantelzorger" &&
             !data.emergency_camera_unlocked &&
             !data.camera_always_enabled
           ) {
-            // Zet noodtoegang aan in Supabase (zodat het patiënt-toestel direct volgt)
-            await supabase
-              .from("shared_settings")
-              .update({ emergency_camera_unlocked: true })
-              .eq("id", 1);
+            const thirtyMinutesAgo = new Date(
+              Date.now() - 30 * 60000,
+            ).toISOString();
 
-            // Stuur NU pas de privacy melding naar de patiënt!
-            await supabase.from("notifications").insert({
-              title: "Camera actief",
-              body: "De mantelzorger kijkt tijdelijk mee via de camera.",
-              type: "privacy",
-            });
+            const { count } = await supabase
+              .from("notifications")
+              .select("*", { count: "exact", head: true })
+              .eq("type", "emergency")
+              .eq("read", false) // <-- Enkel ongelezen noodgevallen tellen mee
+              .gte("created_at", thirtyMinutesAgo);
 
-            if (isActive) setEmergencyAccess(true);
+            if (count && count > 0) {
+              startCareSession();
+            }
           }
         }
       };
 
-      checkAndUnlockCamera();
+      loadStatus();
 
-      // 3. Luister realtime naar updates (Cruciaal voor de patiënt-app)
+      // 2. Vergrendel-helper, herbruikt bij blur EN bij app-achtergrond.
+      const lockEmergencyAccess = () => {
+        if (role === "mantelzorger") {
+          supabase
+            .from("shared_settings")
+            .update({ emergency_camera_unlocked: false })
+            .eq("id", 1)
+            .then(({ error }) => {
+              if (error) console.error("Fout bij sluiten camera:", error);
+            });
+        }
+      };
+
+      // 3. Vergrendel meteen zodra de app naar de achtergrond gaat / wordt
+      //    afgesloten — hier op wachten via de blur van useFocusEffect alleen
+      //    is niet betrouwbaar genoeg (dat vuurt niet af bij app-kill).
+      const appStateSub = AppState.addEventListener("change", (nextState) => {
+        if (nextState !== "active") lockEmergencyAccess();
+      });
+
+      // 4. Luister realtime naar updates (Cruciaal voor de patiënt-app)
       const channel = supabase
         .channel("public:shared_settings_robot")
         .on(
@@ -261,16 +298,21 @@ export default function RobotScreen() {
         )
         .subscribe();
 
+      // DE CLEANUP FUNCTIE (Wordt uitgevoerd zodra je dit tabblad verlaat)
       return () => {
         isActive = false;
+
+        lockEmergencyAccess();
+        appStateSub.remove();
         supabase.removeChannel(channel);
+
         move("stop");
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
         if (Platform.OS === "android")
           NavigationBar.setVisibilityAsync("visible");
         navigation.setOptions({ headerShown: true, tabBarStyle: undefined });
       };
-    }, [navigation, role]),
+    }, [role]),
   );
 
   const toggleFullscreen = async () => {
@@ -312,6 +354,24 @@ export default function RobotScreen() {
     setTimeout(reloadVideo, 100);
   };
 
+  const handleEmergencyResolved = async () => {
+    // 1. Zet alle ongelezen noodmeldingen op gelezen
+    await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("type", "emergency")
+      .eq("read", false);
+
+    // 2. Vergrendel de camera in Supabase
+    await supabase
+      .from("shared_settings")
+      .update({ emergency_camera_unlocked: false })
+      .eq("id", 1);
+
+    // 3. Sluit de camera direct op het scherm
+    setEmergencyAccess(false);
+  };
+
   const html = `
     <html>
       <head>
@@ -340,10 +400,23 @@ export default function RobotScreen() {
               <>
                 {emergencyAccess && !cameraAlways && (
                   <View style={styles.emergencyBanner}>
-                    <Ionicons name="warning" size={16} color="#ff4444" />
-                    <Text style={styles.emergencyBannerText}>
-                      Noodtoegang actief
-                    </Text>
+                    <View
+                      style={{ flexDirection: "row", alignItems: "center" }}
+                    >
+                      <Ionicons name="warning" size={16} color="#ff4444" />
+                      <Text style={styles.emergencyBannerText}>
+                        Noodtoegang actief
+                      </Text>
+                    </View>
+
+                    {role === "mantelzorger" && (
+                      <TouchableOpacity
+                        style={styles.resolveBtn}
+                        onPress={handleEmergencyResolved}
+                      >
+                        <Text style={styles.resolveBtnText}>AFHANDELEN</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
 
@@ -362,8 +435,7 @@ export default function RobotScreen() {
                 <Text style={styles.privacyTitle}>Camera Vergrendeld</Text>
                 <Text style={styles.privacyText}>
                   De camera is momenteel gedeactiveerd om de privacy van de
-                  patiënt te waarborgen. In het geval van een zorgscenario wordt
-                  dit scherm automatisch vrijgegeven.
+                  patiënt te waarborgen.
                 </Text>
               </View>
             )}
@@ -638,5 +710,19 @@ const styles = StyleSheet.create({
     top: 30,
     right: 30,
     alignItems: "flex-end",
+  },
+
+  resolveBtn: {
+    backgroundColor: "white",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginLeft: 15,
+  },
+  resolveBtnText: {
+    color: "#ff4444",
+    fontSize: 10,
+    fontWeight: "bold",
+    letterSpacing: 1,
   },
 });

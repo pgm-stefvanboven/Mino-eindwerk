@@ -40,9 +40,7 @@ export default function SettingsScreen() {
   const [patientScanLocked, setPatientScanLocked] = useState(false);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
-  const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
-    null,
-  );
+  const [batteryPercentage, setBatteryPercentage] = useState<number | null>(null);
   const [robotOnline, setRobotOnline] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -61,7 +59,7 @@ export default function SettingsScreen() {
         .select("*")
         .eq("id", 1)
         .single();
-
+        
       if (data && !error) {
         setContactLocked(data.contact_locked);
         setPatientScanLocked(data.scan_locked);
@@ -81,7 +79,7 @@ export default function SettingsScreen() {
           setContactLocked(updatedSettings.contact_locked);
           setPatientScanLocked(updatedSettings.scan_locked);
           setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
-        },
+        }
       )
       .subscribe();
 
@@ -95,7 +93,7 @@ export default function SettingsScreen() {
     const loadLocal = async () => {
       const savedUrl = await getPiBaseUrl();
       setUrl(savedUrl);
-
+      
       const savedName = await AsyncStorage.getItem("CONTACT_NAME");
       const savedRelation = await AsyncStorage.getItem("CONTACT_RELATION");
       const savedPhone = await AsyncStorage.getItem("CONTACT_PHONE");
@@ -118,12 +116,7 @@ export default function SettingsScreen() {
     return () => clearInterval(interval);
   }, [url]);
 
-  const showModal = (
-    title: string,
-    message: string,
-    type: "success" | "error" | "warning",
-    onConfirm: (() => void) | null = null,
-  ) => {
+  const showModal = (title: string, message: string, type: "success" | "error" | "warning", onConfirm: (() => void) | null = null) => {
     setModalConfig({ title, message, type, onConfirm });
     setModalVisible(true);
   };
@@ -135,21 +128,13 @@ export default function SettingsScreen() {
 
   const saveContact = async () => {
     if (contactPhone.length < 9) {
-      showModal(
-        "Ongeldig Nummer",
-        "Een telefoonnummer moet minstens 9 cijfers bevatten.",
-        "error",
-      );
+      showModal("Ongeldig Nummer", "Een telefoonnummer moet minstens 9 cijfers bevatten.", "error");
       return;
     }
     await AsyncStorage.setItem("CONTACT_NAME", contactName);
     await AsyncStorage.setItem("CONTACT_RELATION", contactRelation);
     await AsyncStorage.setItem("CONTACT_PHONE", contactPhone);
-    showModal(
-      "Opgeslagen",
-      "De contactgegevens zijn succesvol bijgewerkt.",
-      "success",
-    );
+    showModal("Opgeslagen", "De contactgegevens zijn succesvol bijgewerkt.", "success");
   };
 
   const handleVolumeChange = async (value: number) => {
@@ -171,26 +156,17 @@ export default function SettingsScreen() {
   // NIEUW: Updates naar Supabase in plaats van AsyncStorage
   const toggleContactLock = async (value: boolean) => {
     setContactLocked(value); // Optimistische UI update
-    await supabase
-      .from("shared_settings")
-      .update({ contact_locked: value })
-      .eq("id", 1);
+    await supabase.from("shared_settings").update({ contact_locked: value }).eq("id", 1);
   };
 
   const togglePatientScanLock = async (value: boolean) => {
     setPatientScanLocked(value); // Optimistische UI update
-    await supabase
-      .from("shared_settings")
-      .update({ scan_locked: value })
-      .eq("id", 1);
+    await supabase.from("shared_settings").update({ scan_locked: value }).eq("id", 1);
   };
 
   const toggleCameraAlwaysEnabled = async (value: boolean) => {
     setCameraAlwaysEnabled(value); // Optimistische UI update
-    await supabase
-      .from("shared_settings")
-      .update({ camera_always_enabled: value })
-      .eq("id", 1);
+    await supabase.from("shared_settings").update({ camera_always_enabled: value }).eq("id", 1);
   };
 
   const testConnection = async () => {
@@ -202,11 +178,7 @@ export default function SettingsScreen() {
       showModal("Verbonden!", "De robot is bereikbaar.", "success");
     } catch (e) {
       setRobotOnline(false);
-      showModal(
-        "Verbinding Mislukt",
-        "Kan geen verbinding maken. Check IP en WiFi.",
-        "error",
-      );
+      showModal("Verbinding Mislukt", "Kan geen verbinding maken. Check IP en WiFi.", "error");
     } finally {
       setLoading(false);
     }
@@ -226,15 +198,8 @@ export default function SettingsScreen() {
 
   const resetZorgScenario = async () => {
     // Reset de noodtoegang in Supabase
-    await supabase
-      .from("shared_settings")
-      .update({ emergency_camera_unlocked: false })
-      .eq("id", 1);
-    showModal(
-      "Scenario Gereset",
-      "De noodtoegang is ingetrokken en het scenario is gereset.",
-      "success",
-    );
+    await supabase.from("shared_settings").update({ emergency_camera_unlocked: false }).eq("id", 1);
+    showModal("Scenario Gereset", "De noodtoegang is ingetrokken en het scenario is gereset.", "success");
   };
 
   const confirmReset = () => {
@@ -244,26 +209,15 @@ export default function SettingsScreen() {
       "warning",
       async () => {
         await AsyncStorage.clear();
-        await supabase
-          .from("shared_settings")
-          .update({
-            contact_locked: false,
-            scan_locked: false,
-            camera_always_enabled: false,
-            emergency_camera_unlocked: false,
-          })
-          .eq("id", 1);
+        await supabase.from("shared_settings").update({
+          contact_locked: false,
+          scan_locked: false,
+          camera_always_enabled: false,
+          emergency_camera_unlocked: false
+        }).eq("id", 1);
         setModalVisible(false);
-        setTimeout(
-          () =>
-            showModal(
-              "Gereset",
-              "De app is terug naar fabrieksinstellingen.",
-              "success",
-            ),
-          300,
-        );
-      },
+        setTimeout(() => showModal("Gereset", "De app is terug naar fabrieksinstellingen.", "success"), 300);
+      }
     );
   };
 
@@ -313,7 +267,7 @@ export default function SettingsScreen() {
                 placeholder="0470123456"
                 placeholderTextColor="#444"
                 keyboardType="phone-pad"
-                maxLength={10}
+                maxLength={10} 
                 editable={!(role === "patient" && contactLocked)}
               />
             </View>
