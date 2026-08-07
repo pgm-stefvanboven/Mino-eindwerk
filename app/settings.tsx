@@ -4,7 +4,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Slider from "@react-native-community/slider";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -16,6 +16,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  BackHandler,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRole } from "../context/RoleContext";
@@ -40,6 +41,7 @@ export default function SettingsScreen() {
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
   const [contactLocked, setContactLocked] = useState(false);
   const [patientScanLocked, setPatientScanLocked] = useState(false);
+  const lastResetSignal = useRef<number | null>(null);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
   const [batteryPercentage, setBatteryPercentage] = useState<number | null>(
@@ -53,6 +55,7 @@ export default function SettingsScreen() {
     message: string;
     type: "success" | "error" | "warning";
     onConfirm?: () => void;
+    confirmText?: string;
   }>({
     title: "",
     message: "",
@@ -81,9 +84,13 @@ export default function SettingsScreen() {
           setIsEditingContact(false);
         }
 
-        // Haal volume data op
         if (data.mino_volume !== null) setVolume(data.mino_volume);
         if (data.volume_locked !== null) setVolumeLocked(data.volume_locked);
+
+        // NIEUW: Sla het huidige reset-signaal op
+        if (data.reset_signal !== null) {
+          lastResetSignal.current = data.reset_signal;
+        }
       }
     };
 
@@ -103,19 +110,37 @@ export default function SettingsScreen() {
             setPatientScanLocked(updatedSettings.scan_locked);
           if (updatedSettings.camera_always_enabled !== undefined)
             setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
-
           if (updatedSettings.contact_name !== undefined)
             setContactName(updatedSettings.contact_name);
           if (updatedSettings.contact_relation !== undefined)
             setContactRelation(updatedSettings.contact_relation);
           if (updatedSettings.contact_phone !== undefined)
             setContactPhone(updatedSettings.contact_phone);
-
-          // Realtime luisteren naar volume wijzigingen
           if (updatedSettings.mino_volume !== undefined)
             setVolume(updatedSettings.mino_volume);
           if (updatedSettings.volume_locked !== undefined)
             setVolumeLocked(updatedSettings.volume_locked);
+
+          // De globale Kill Switch!
+          if (
+            updatedSettings.reset_signal &&
+            updatedSettings.reset_signal !== lastResetSignal.current
+          ) {
+            lastResetSignal.current = updatedSettings.reset_signal;
+
+            // Wis alles lokaal en forceer de app om af te sluiten
+            AsyncStorage.clear().then(() => {
+              showModal(
+                "Systeem Gereset",
+                "Alle data en instellingen zijn zojuist gewist. De app zal nu afsluiten.",
+                "warning",
+                () => {
+                  BackHandler.exitApp();
+                },
+                "AFSLUITEN",
+              );
+            });
+          }
         },
       )
       .subscribe();
@@ -150,8 +175,9 @@ export default function SettingsScreen() {
     message: string,
     type: "success" | "error" | "warning",
     onConfirm?: () => void,
+    confirmText: string = "JA, WISSEN",
   ) => {
-    setModalConfig({ title, message, type, onConfirm });
+    setModalConfig({ title, message, type, onConfirm, confirmText });
     setModalVisible(true);
   };
 
@@ -305,7 +331,9 @@ export default function SettingsScreen() {
       "Dit verwijdert alle medicatie-historiek en voorraad. Dit kan niet ongedaan gemaakt worden.",
       "warning",
       async () => {
-        await AsyncStorage.clear();
+        setModalVisible(false); // Sluit de eerste bevestigings-modal
+
+        // We updaten Supabase. Dit triggert de listener op alle apparaten
         await supabase
           .from("shared_settings")
           .update({
@@ -313,18 +341,9 @@ export default function SettingsScreen() {
             scan_locked: false,
             camera_always_enabled: false,
             emergency_camera_unlocked: false,
+            reset_signal: Date.now(),
           })
           .eq("id", 1);
-        setModalVisible(false);
-        setTimeout(
-          () =>
-            showModal(
-              "Gereset",
-              "De app is terug naar fabrieksinstellingen.",
-              "success",
-            ),
-          300,
-        );
       },
     );
   };
@@ -960,7 +979,9 @@ export default function SettingsScreen() {
                     style={[styles.modalBtn, { backgroundColor: "#ff4444" }]}
                     onPress={modalConfig.onConfirm}
                   >
-                    <Text style={styles.modalBtnText}>JA, WISSEN</Text>
+                    <Text style={styles.modalBtnText}>
+                      {modalConfig.confirmText}
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.modalBtn, { backgroundColor: "#333" }]}
