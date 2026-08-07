@@ -1,63 +1,57 @@
+import React, { createContext, useState, useEffect, useContext } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { createContext, ReactNode, useContext, useState } from "react";
 
-// 1. We define the two possible roles (and null for when no choice has been made yet)
-export type Role = "patient" | "mantelzorger" | null;
+type Role = "patient" | "mantelzorger" | null;
 
-// 2. We determine how our state looks
-interface RoleContextType {
+interface RoleContextData {
   role: Role;
-  loading: boolean;
   setRole: (role: Role) => Promise<void>;
+  loading: boolean;
 }
 
-// 3. We create the actual context, starting with undefined to enforce that it must be used within a provider.
-const RoleContext = createContext<RoleContextType | undefined>(undefined);
+const RoleContext = createContext<RoleContextData>({} as RoleContextData);
 
-// 4. This is the “shell” we will wrap around your app. It provides the context to all child components.
-export const RoleProvider = ({ children }: { children: ReactNode }) => {
+export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [role, setRoleState] = useState<Role>(null);
   const [loading, setLoading] = useState(true);
 
-  const setRole = async (newRole: Role) => {
-    setRoleState(newRole);
-
-    if (newRole === null) {
-      await AsyncStorage.removeItem("USER_ROLE");
-      return;
-    }
-
-    await AsyncStorage.setItem("USER_ROLE", newRole);
-  };
-
-  React.useEffect(() => {
+  // Bij het opstarten van de app: check of er al een rol is opgeslagen
+  useEffect(() => {
     const loadRole = async () => {
-      const savedRole = await AsyncStorage.getItem("ROLE");
-
-      if (savedRole === "patient" || savedRole === "mantelzorger") {
-        setRoleState(savedRole);
+      try {
+        const savedRole = await AsyncStorage.getItem("USER_ROLE");
+        if (savedRole === "patient" || savedRole === "mantelzorger") {
+          setRoleState(savedRole);
+        }
+      } catch (e) {
+        console.error("Fout bij laden van de rol:", e);
+      } finally {
+        setLoading(false); // Het laden is klaar, de app mag nu renderen
       }
-
-      setLoading(false);
     };
 
     loadRole();
   }, []);
 
+  // Functie om de rol te veranderen én definitief op te slaan
+  const setRole = async (newRole: Role) => {
+    try {
+      if (newRole) {
+        await AsyncStorage.setItem("USER_ROLE", newRole);
+      } else {
+        await AsyncStorage.removeItem("USER_ROLE");
+      }
+      setRoleState(newRole);
+    } catch (e) {
+      console.error("Fout bij opslaan van de rol:", e);
+    }
+  };
+
   return (
-    <RoleContext.Provider value={{ role, loading, setRole }}>
+    <RoleContext.Provider value={{ role, setRole, loading }}>
       {children}
     </RoleContext.Provider>
   );
-};
+}
 
-// Custom hook om de rol te gebruiken
-export const useRole = () => {
-  const context = useContext(RoleContext);
-
-  if (context === undefined) {
-    throw new Error("useRole must be used within a RoleProvider");
-  }
-
-  return context;
-};
+export const useRole = () => useContext(RoleContext);

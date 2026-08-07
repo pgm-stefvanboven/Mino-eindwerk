@@ -20,10 +20,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRole } from "../context/RoleContext";
 import { getPiBaseUrl, Pi, setPiBaseUrl } from "../services/pi";
-import { registerCaregiver, unregisterCaregiver } from "../services/pushNotifications";
 
 export default function SettingsScreen() {
-  const { role, setRole } = useRole();
+  const { role } = useRole();
 
   const [url, setUrl] = useState("");
   const [contactName, setContactName] = useState("");
@@ -57,15 +56,6 @@ export default function SettingsScreen() {
     type: "success",
     onConfirm: null as null | (() => void),
   });
-
-  const handleRoleSwitch = async (newRole: "patient" | "mantelzorger") => {
-    if (newRole === "mantelzorger") {
-      await registerCaregiver("Mantelzorger");
-    } else {
-      await unregisterCaregiver();
-    }
-    await setRole(newRole);
-  };
 
   useEffect(() => {
     const load = async () => {
@@ -263,68 +253,6 @@ export default function SettingsScreen() {
       <StatusBar barStyle="light-content" />
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* ACCOUNT WISSELEN */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>ACCOUNT WISSELEN (DEMO)</Text>
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.accountRow}
-              onPress={() => handleRoleSwitch("patient")}
-            >
-              <View
-                style={[
-                  styles.avatarCircle,
-                  { backgroundColor: role === "patient" ? "#3b82f6" : "#333" },
-                ]}
-              >
-                <Text style={styles.avatarText}>G</Text>
-              </View>
-              <Text
-                style={[
-                  styles.accountName,
-                  role === "patient" && { fontWeight: "bold", color: "white" },
-                ]}
-              >
-                Gebruiker (Patiënt)
-              </Text>
-              {role === "patient" && (
-                <Ionicons name="checkmark-circle" size={24} color="#3b82f6" />
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.accountRow, { borderBottomWidth: 0 }]}
-              onPress={() => handleRoleSwitch("mantelzorger")}
-            >
-              <View
-                style={[
-                  styles.avatarCircle,
-                  {
-                    backgroundColor:
-                      role === "mantelzorger" ? "#10b981" : "#333",
-                  },
-                ]}
-              >
-                <Text style={styles.avatarText}>M</Text>
-              </View>
-              <Text
-                style={[
-                  styles.accountName,
-                  role === "mantelzorger" && {
-                    fontWeight: "bold",
-                    color: "white",
-                  },
-                ]}
-              >
-                Mantelzorger
-              </Text>
-              {role === "mantelzorger" && (
-                <Ionicons name="checkmark-circle" size={24} color="#10b981" />
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* MANTELZORGER CONTACTGEGEVENS */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>MANTELZORGER CONTACTGEGEVENS</Text>
@@ -366,7 +294,7 @@ export default function SettingsScreen() {
                 placeholder="0470123456"
                 placeholderTextColor="#444"
                 keyboardType="phone-pad"
-                maxLength={10} // <-- Oplossing bug: native limiet stopt flikkeren
+                maxLength={10}
                 editable={!(role === "patient" && contactLocked)}
               />
             </View>
@@ -909,31 +837,7 @@ const styles = StyleSheet.create({
   },
   card: { backgroundColor: "#1c1c1e", borderRadius: 12, padding: 16 },
 
-  accountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.05)",
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  avatarText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  accountName: {
-    flex: 1,
-    color: "#a1a1aa",
-    fontSize: 16,
-  },
+  // Let op: Ik heb 'accountRow', 'avatarCircle', 'avatarText' en 'accountName' ook uit de styles gehaald!
 
   inputRow: {
     flexDirection: "row",
