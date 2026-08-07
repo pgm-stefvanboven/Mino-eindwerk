@@ -331,10 +331,13 @@ def care_emergency():
 
     title = "Mino"
     body = "Geen reactie op de medicatieherinnering. Controleer de gebruiker."
-
     save_notification(title, body)
-
     send_push_notification(title, body)
+
+# 2. Transparantiemelding voor de patiënt in de database
+    title_patient = "Camera actief"
+    body_patient = "Mantelzorger werd verwittigd en kijkt tijdelijk mee via de camera."
+    save_notification(title_patient, body_patient, "privacy")
 
     return jsonify({"status": "ok"})
 

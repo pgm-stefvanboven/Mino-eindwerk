@@ -23,14 +23,13 @@ type Notification = {
 
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const { role } = useRole(); // Retrieve the current role
+  const { role } = useRole();
 
   useEffect(() => {
-    // Stop immediately if the user is a patient
-    if (role === "patient") return;
-
+    // 1. Haal de gefilterde lijst op bij het laden
     loadNotifications();
 
+    // 2. REALTIME LISTENER: Luister naar nieuwe gebeurtenissen
     const channel = supabase
       .channel("public:notifications_list")
       .on(
@@ -38,11 +37,16 @@ export default function NotificationsScreen() {
         { event: "*", schema: "public", table: "notifications" },
         (payload) => {
           if (payload.eventType === "INSERT") {
-            // New report? Put it right at the top of the list
             const newNotification = payload.new as Notification;
+
+            // FILTER: Voorkom dat de melding in de lijst komt als de rol niet klopt
+            if (role === "patient" && newNotification.type !== "privacy")
+              return;
+            if (role === "mantelzorger" && newNotification.type === "privacy")
+              return;
+
             setNotifications((prev) => [newNotification, ...prev]);
           } else if (payload.eventType === "UPDATE") {
-            // Notification updated? (e.g., in another session marked as read)
             const updatedNotification = payload.new as Notification;
             setNotifications((prev) =>
               prev.map((notif) =>
@@ -52,7 +56,6 @@ export default function NotificationsScreen() {
               ),
             );
           } else if (payload.eventType === "DELETE") {
-            // Notification deleted in the database? Remove it from the list
             const deletedNotification = payload.old as Notification;
             setNotifications((prev) =>
               prev.filter((notif) => notif.id !== deletedNotification.id),
@@ -62,17 +65,25 @@ export default function NotificationsScreen() {
       )
       .subscribe();
 
-    // Cleanup als het scherm wordt afgesloten
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [role]); // Voeg role toe als dependency zodat hij herlaadt bij een wissel
 
   const loadNotifications = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from("notifications")
       .select("*")
       .order("created_at", { ascending: false });
+
+    // Pas de query aan op basis van de rol
+    if (role === "patient") {
+      query = query.eq("type", "privacy"); // Patiënt ziet ENKEL privacy meldingen
+    } else if (role === "mantelzorger") {
+      query = query.neq("type", "privacy"); // Mantelzorger ziet ALLES BEHALVE privacy meldingen
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error(error);
@@ -85,7 +96,6 @@ export default function NotificationsScreen() {
   const markAsRead = async (id: string, isRead: boolean) => {
     if (isRead) return;
 
-    // Optimistische UI update (direct de bol verbergen voor een snelle app-ervaring)
     setNotifications((prev) =>
       prev.map((notif) => (notif.id === id ? { ...notif, read: true } : notif)),
     );
@@ -107,23 +117,29 @@ export default function NotificationsScreen() {
           iconName: "alert-circle",
           iconColor: "#ef4444",
           title: "Noodsituatie",
-        }; // Rood
+        };
       case "medication":
-        return { iconName: "medkit", iconColor: "#3b82f6", title: "Medicatie" }; // Blauw
+        return { iconName: "medkit", iconColor: "#3b82f6", title: "Medicatie" };
       case "battery":
         return {
           iconName: "battery-dead",
           iconColor: "#f59e0b",
           title: "Batterij",
-        }; // Oranje
+        };
       case "stock":
-        return { iconName: "cube", iconColor: "#10b981", title: "Voorraad" }; // Groen
+        return { iconName: "cube", iconColor: "#10b981", title: "Voorraad" };
+      case "privacy":
+        return {
+          iconName: "shield-checkmark",
+          iconColor: "#8b5cf6",
+          title: "Privacy",
+        }; // Nieuwe layout voor patiënt
       default:
         return {
           iconName: "notifications",
           iconColor: "#a1a1aa",
           title: originalTitle || "Melding",
-        }; // Grijs
+        };
     }
   };
 
@@ -143,32 +159,7 @@ export default function NotificationsScreen() {
     return `${datePart} • ${timePart}`;
   };
 
-  if (role === "patient") {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            padding: 20,
-          }}
-        >
-          <Ionicons name="shield-half" size={48} color="#3b82f6" />
-          <Text
-            style={{
-              color: "white",
-              fontSize: 18,
-              marginTop: 16,
-              textAlign: "center",
-            }}
-          >
-            Dit scherm is enkel toegankelijk voor de mantelzorger.
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  // VERWIJDERD: Het harde blokkeerscherm voor de patiënt is hier weggehaald zodat de patiënt de privacy-melding kan lezen.
 
   return (
     <SafeAreaView style={styles.container}>
@@ -268,8 +259,9 @@ export default function NotificationsScreen() {
                 lineHeight: 22,
               }}
             >
-              Meldingen van Mino verschijnen hier zodra er een gebeurtenis
-              plaatsvindt.
+              {role === "patient"
+                ? "Systeemmeldingen over uw privacy verschijnen hier."
+                : "Meldingen van Mino verschijnen hier zodra er een gebeurtenis plaatsvindt."}
             </Text>
           </View>
         }

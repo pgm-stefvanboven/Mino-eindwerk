@@ -2,20 +2,20 @@ import { Tabs, useRouter, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View, Text } from "react-native";
-import { useRole } from "../../context/RoleContext"; // 1. Importeer de context
+import { useRole } from "../../context/RoleContext";
 import { supabase } from "../../lib/supabase";
 
 export default function TabLayout() {
   const router = useRouter();
   const pathname = usePathname();
-  const { role } = useRole(); // 2. Haal de actieve rol op
+  const { role } = useRole();
 
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // 3. NIEUW: Update de badge elke keer als je van of naar dit scherm navigeert
+  // Update de badge elke keer als je van of naar dit scherm navigeert, of als de rol wijzigt
   useEffect(() => {
     fetchUnreadCount();
-  }, [pathname]);
+  }, [pathname, role]);
 
   useEffect(() => {
     // Haal direct het aantal op bij het laden
@@ -36,13 +36,22 @@ export default function TabLayout() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [role]); // Opnieuw initialiseren als de rol verandert
 
   const fetchUnreadCount = async () => {
-    const { count, error } = await supabase
+    let query = supabase
       .from("notifications")
       .select("*", { count: "exact", head: true })
       .eq("read", false);
+
+    // Filter het aantal ongelezen meldingen specifiek voor de actieve rol
+    if (role === "patient") {
+      query = query.eq("type", "privacy");
+    } else if (role === "mantelzorger") {
+      query = query.neq("type", "privacy");
+    }
+
+    const { count, error } = await query;
 
     if (!error && count !== null) {
       setUnreadCount(count);
@@ -152,7 +161,7 @@ export default function TabLayout() {
         name="robot"
         options={{
           title: "CAMERA",
-          // 3. PRIVACY-BY-DESIGN: Hide the tab completely from the patient.
+          // PRIVACY-BY-DESIGN: Hide the tab completely from the patient.
           href: role === "patient" ? null : "/robot",
           tabBarIcon: ({ color }) => (
             <Ionicons name="videocam" size={24} color={color} />
