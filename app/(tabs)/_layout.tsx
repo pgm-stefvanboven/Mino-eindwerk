@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import { Tabs, useRouter, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";

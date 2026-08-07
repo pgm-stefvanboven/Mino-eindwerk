@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-import React from "react";
+ import React from "react";
 import {
   View,
   Text,
@@ -13,9 +12,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useNavigation } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ScreenOrientation from "expo-screen-orientation";
 import * as NavigationBar from "expo-navigation-bar";
+import { supabase } from "../../lib/supabase";
+import { useRole } from "../../context/RoleContext";
 
 const VIDEO_IP = "http://10.178.148.75:5001";
 const COMMAND_IP = "http://10.178.148.75:5002";
@@ -56,15 +56,14 @@ const TechBtn = ({
 );
 
 const StatusBadge = ({ status }: { status: string }) => {
-  // Standaard is rood (voor CONNECTING of OFFLINE)
   let color = "#ff4444";
   let bg = "rgba(255, 60, 60, 0.2)";
 
   if (status === "ONLINE") {
-    color = "#3cdc78"; // Groen
+    color = "#3cdc78";
     bg = "rgba(60, 220, 120, 0.2)";
   } else if (status === "VERGRENDELD") {
-    color = "#00f0ff"; // Blauw (past bij het slotje)
+    color = "#00f0ff";
     bg = "rgba(0, 240, 255, 0.15)";
   }
 
@@ -76,12 +75,11 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-// Aangepaste DPad die 'size' accepteert voor schaling
 const DPad = ({
   moveFn,
   type,
   label,
-  size = 50, // Standaard grootte
+  size = 50,
 }: {
   moveFn: (d: string) => void;
   type: "move" | "cam";
@@ -89,7 +87,6 @@ const DPad = ({
   size?: number;
 }) => {
   const isMove = type === "move";
-  // Dynamische cell grootte gebaseerd op knopgrootte
   const cellSize = size + 10;
 
   const icons = isMove
@@ -179,20 +176,17 @@ const DPad = ({
 export default function RobotScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { role } = useRole(); // Rol ophalen
+
   const [webKey, setWebKey] = React.useState(0);
   const [status, setStatus] = React.useState<
     "ONLINE" | "CONNECTING" | "OFFLINE"
   >("CONNECTING");
   const [isFullscreen, setIsFullscreen] = React.useState(false);
 
-  // NIEUW: Toegangs staten
+  // SUPABASE SHARED STATES
   const [cameraAlways, setCameraAlways] = React.useState(false);
   const [emergencyAccess, setEmergencyAccess] = React.useState(false);
-  const [contact, setContact] = React.useState({
-    name: "",
-    relation: "",
-    phone: "",
-  });
 
   const move = (dir: string) => {
     fetch(`${COMMAND_IP}/move/${dir}`).catch(() => setStatus("OFFLINE"));
@@ -205,34 +199,78 @@ export default function RobotScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      let isActive = true;
+
       if (Platform.OS === "android")
         NavigationBar.setVisibilityAsync("visible");
+
       reloadVideo();
 
-      AsyncStorage.multiGet([
-        "CONTACT_NAME",
-        "CONTACT_RELATION",
-        "CONTACT_PHONE",
-        "CAMERA_ALWAYS_ENABLED",
-        "CAMERA_EMERGENCY_ACCESS",
-      ]).then((result) => {
-        setContact({
-          name: result[0][1] || "",
-          relation: result[1][1] || "",
-          phone: result[2][1] || "",
-        });
-        setCameraAlways(result[3][1] === "true");
-        setEmergencyAccess(result[4][1] === "true");
-      });
+      // 1. Initialiseer en controleer Supabase statussen
+      const checkAndUnlockCamera = async () => {
+        const { data, error } = await supabase
+          .from("shared_settings")
+          .select("*")
+          .eq("id", 1)
+          .single();
+
+        if (data && !error) {
+          if (isActive) {
+            setCameraAlways(data.camera_always_enabled);
+            setEmergencyAccess(data.emergency_camera_unlocked);
+          }
+
+          // 2. Als mantelzorger het scherm opent en het is nog NIET ontgrendeld:
+          if (
+            role === "mantelzorger" &&
+            !data.emergency_camera_unlocked &&
+            !data.camera_always_enabled
+          ) {
+            // Zet noodtoegang aan in Supabase (zodat het patiënt-toestel direct volgt)
+            await supabase
+              .from("shared_settings")
+              .update({ emergency_camera_unlocked: true })
+              .eq("id", 1);
+
+            // Stuur NU pas de privacy melding naar de patiënt!
+            await supabase.from("notifications").insert({
+              title: "Camera actief",
+              body: "De mantelzorger kijkt tijdelijk mee via de camera.",
+              type: "privacy",
+            });
+
+            if (isActive) setEmergencyAccess(true);
+          }
+        }
+      };
+
+      checkAndUnlockCamera();
+
+      // 3. Luister realtime naar updates (Cruciaal voor de patiënt-app)
+      const channel = supabase
+        .channel("public:shared_settings_robot")
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "shared_settings" },
+          (payload) => {
+            if (isActive) {
+              setCameraAlways(payload.new.camera_always_enabled);
+              setEmergencyAccess(payload.new.emergency_camera_unlocked);
+            }
+          },
+        )
+        .subscribe();
 
       return () => {
+        isActive = false;
+        supabase.removeChannel(channel);
         move("stop");
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
         if (Platform.OS === "android")
           NavigationBar.setVisibilityAsync("visible");
         navigation.setOptions({ headerShown: true, tabBarStyle: undefined });
       };
-    }, [navigation]),
+    }, [navigation, role]),
   );
 
   const toggleFullscreen = async () => {
@@ -263,7 +301,6 @@ export default function RobotScreen() {
 
       if (Platform.OS === "android") {
         await NavigationBar.setVisibilityAsync("hidden");
-
         try {
           await NavigationBar.setBehaviorAsync("overlay-swipe");
         } catch {}
@@ -288,7 +325,7 @@ export default function RobotScreen() {
     </html>
   `;
 
-  // Check de toegang:
+  // Heeft dit scherm momenteel recht om de stream te tonen?
   const hasAccess = cameraAlways || emergencyAccess;
 
   return (
@@ -301,8 +338,7 @@ export default function RobotScreen() {
           <View style={styles.videoContainer}>
             {hasAccess ? (
               <>
-                {/* BANNER BINNEN DE VIDEO ZODRA ER NOODTOEGANG IS */}
-                {emergencyAccess && (
+                {emergencyAccess && !cameraAlways && (
                   <View style={styles.emergencyBanner}>
                     <Ionicons name="warning" size={16} color="#ff4444" />
                     <Text style={styles.emergencyBannerText}>
@@ -321,7 +357,6 @@ export default function RobotScreen() {
                 />
               </>
             ) : (
-              /* PRIVACY KAART ALS ER GEEN TOEGANG IS */
               <View style={styles.privacyView}>
                 <Ionicons name="lock-closed" size={60} color="#00f0ff" />
                 <Text style={styles.privacyTitle}>Camera Vergrendeld</Text>
@@ -334,11 +369,9 @@ export default function RobotScreen() {
             )}
           </View>
 
-          {/* CONTROL BAR (Status & Refresh & Fullscreen) */}
           <View style={styles.controlBar}>
             <StatusBadge status={hasAccess ? status : "VERGRENDELD"} />
             <View style={{ flexDirection: "row", gap: 15 }}>
-              {/* Verberg actieknoppen als er geen toegang is */}
               {hasAccess && (
                 <>
                   <TechBtn icon="refresh" size={40} onPress={reloadVideo} />
@@ -348,7 +381,6 @@ export default function RobotScreen() {
             </View>
           </View>
 
-          {/* BESTURING (Rijden & Kijken) */}
           {hasAccess ? (
             <View style={styles.portraitControls}>
               <DPad moveFn={move} type="move" label="RIJDEN" size={42} />
@@ -356,7 +388,6 @@ export default function RobotScreen() {
               <DPad moveFn={move} type="cam" label="KIJKEN" size={42} />
             </View>
           ) : (
-            /* Lege ruimte om de layout mooi in balans te houden als besturing weg is */
             <View
               style={{
                 flex: 1,
@@ -402,7 +433,6 @@ export default function RobotScreen() {
             )}
           </View>
 
-          {/* HUD LAYER */}
           <View
             style={[
               styles.fsHud,
@@ -416,7 +446,6 @@ export default function RobotScreen() {
               <StatusBadge status={hasAccess ? status : "VERGRENDELD"} />
             </View>
 
-            {/* Verberg D-Pads als er geen toegang is */}
             {hasAccess && (
               <>
                 <View style={styles.fsBottomLeft}>
@@ -429,7 +458,6 @@ export default function RobotScreen() {
             )}
 
             <View style={styles.fsTopRight}>
-              {/* Refresh kan weg als er geen camera is */}
               {hasAccess && (
                 <TechBtn
                   icon="refresh"
@@ -438,7 +466,6 @@ export default function RobotScreen() {
                   style={{ marginBottom: 15 }}
                 />
               )}
-              {/* SLUIT-KNOP ALTIJD TONEN! Zodat je nooit vast komt te zitten */}
               <TechBtn
                 icon="close"
                 size={45}
@@ -457,7 +484,6 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#050505" },
   container: { flex: 1, paddingBottom: 20 },
 
-  // --- NIEUW: PRIVACY MODUS & BANNER ---
   privacyView: {
     flex: 1,
     backgroundColor: "#111",
@@ -500,17 +526,14 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // --- VIDEO STYLES (AANGEPAST) ---
   videoContainer: {
     width: "100%",
-    aspectRatio: 16 / 9, // Behoudt breedbeeld
+    aspectRatio: 16 / 9,
     backgroundColor: "#000",
     borderBottomWidth: 1,
     borderColor: "#333",
-    // Geen margin meer, dus schermvullend in de breedte
   },
 
-  // --- CONTROL BAR (NIEUW) ---
   controlBar: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -523,7 +546,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  // Status Badge Styling
   badge: {
     flexDirection: "row",
     alignItems: "center",
@@ -541,7 +563,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // --- PORTRAIT CONTROLS (COMPACTER) ---
   portraitControls: {
     flex: 1,
     flexDirection: "row",
@@ -554,7 +575,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.1)",
   },
 
-  // --- BUTTON & PAD STYLES ---
   padContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -562,7 +582,7 @@ const styles = StyleSheet.create({
   padLabel: {
     color: THEME.primary,
     fontFamily: THEME.font,
-    fontSize: 9, // Iets kleiner font
+    fontSize: 9,
     letterSpacing: 2,
     marginBottom: 8,
     opacity: 0.7,
@@ -588,7 +608,7 @@ const styles = StyleSheet.create({
     shadowColor: "#00f0ff",
     shadowOpacity: 0.15,
     shadowRadius: 8,
-    margin: 2, // Iets minder marge tussen knoppen
+    margin: 2,
   },
   techBtnPressed: {
     backgroundColor: THEME.glassActive,
@@ -600,7 +620,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 42, 42, 0.15)",
   },
 
-  // --- FULLSCREEN STYLES ---
   fsRoot: { flex: 1, backgroundColor: "black" },
   fsVideoLayer: { ...StyleSheet.absoluteFillObject },
   fsHud: { ...StyleSheet.absoluteFillObject, zIndex: 10 },

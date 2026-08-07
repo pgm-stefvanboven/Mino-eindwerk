@@ -217,7 +217,7 @@ def send_push_notification(title, body):
         "body": body,
         "sound": "default",
         "data": {
-            "url": "/notifications"
+            "url": "/robot"
         }
     }
 

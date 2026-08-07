@@ -20,6 +20,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRole } from "../context/RoleContext";
 import { getPiBaseUrl, Pi, setPiBaseUrl } from "../services/pi";
+import { supabase } from "../lib/supabase"; // <-- Toegevoegd
 
 export default function SettingsScreen() {
   const { role } = useRole();
@@ -30,16 +31,11 @@ export default function SettingsScreen() {
   const [contactPhone, setContactPhone] = useState("");
   const [demoMode, setDemoMode] = useState(true);
   const [loading, setLoading] = useState(false);
-
-  // Zorg scenario states
-  const [requireScan, setRequireScan] = useState(true);
-  const [volumeLocked, setVolumeLocked] = useState(false);
   const [volume, setVolume] = useState(50);
+  const [volumeLocked, setVolumeLocked] = useState(false);
 
-  // Nieuwe state voor de demo camera override
+  // SUPABASE SHARED STATES
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
-
-  // Nieuwe state: Vergrendel contactgegevens & scannen
   const [contactLocked, setContactLocked] = useState(false);
   const [patientScanLocked, setPatientScanLocked] = useState(false);
 
@@ -57,47 +53,62 @@ export default function SettingsScreen() {
     onConfirm: null as null | (() => void),
   });
 
+  // SUPABASE REALTIME LISTENER VOOR GEDEELDE INSTELLINGEN
   useEffect(() => {
-    const load = async () => {
+    const fetchSharedSettings = async () => {
+      const { data, error } = await supabase
+        .from("shared_settings")
+        .select("*")
+        .eq("id", 1)
+        .single();
+
+      if (data && !error) {
+        setContactLocked(data.contact_locked);
+        setPatientScanLocked(data.scan_locked);
+        setCameraAlwaysEnabled(data.camera_always_enabled);
+      }
+    };
+
+    fetchSharedSettings();
+
+    const channel = supabase
+      .channel("public:shared_settings")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "shared_settings" },
+        (payload) => {
+          const updatedSettings = payload.new;
+          setContactLocked(updatedSettings.contact_locked);
+          setPatientScanLocked(updatedSettings.scan_locked);
+          setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // LOKALE INSTELLINGEN LADEN
+  useEffect(() => {
+    const loadLocal = async () => {
       const savedUrl = await getPiBaseUrl();
       setUrl(savedUrl);
+
       const savedName = await AsyncStorage.getItem("CONTACT_NAME");
       const savedRelation = await AsyncStorage.getItem("CONTACT_RELATION");
       const savedPhone = await AsyncStorage.getItem("CONTACT_PHONE");
-      const savedScan = await AsyncStorage.getItem("REQUIRE_SCAN");
-      const savedCamAlways = await AsyncStorage.getItem(
-        "CAMERA_ALWAYS_ENABLED",
-      );
       const savedVolumeLock = await AsyncStorage.getItem("VOLUME_LOCKED");
+      const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
 
-      // Laden van de lock states
-      const savedContactLock = await AsyncStorage.getItem("CONTACT_LOCKED");
-      if (savedContactLock !== null) {
-        setContactLocked(savedContactLock === "true");
-      }
-
-      const savedPatientScanLock = await AsyncStorage.getItem(
-        "PATIENT_SCAN_LOCKED",
-      );
-      if (savedPatientScanLock !== null) {
-        setPatientScanLocked(savedPatientScanLock === "true");
-      }
-
-      if (savedScan !== null) setRequireScan(savedScan === "true");
-      if (savedCamAlways !== null)
-        setCameraAlwaysEnabled(savedCamAlways === "true");
       if (savedVolumeLock !== null) setVolumeLocked(savedVolumeLock === "true");
-
       if (savedName) setContactName(savedName);
       if (savedRelation) setContactRelation(savedRelation);
       if (savedPhone) setContactPhone(savedPhone);
-
-      const savedVolume = await AsyncStorage.getItem("MINO_VOLUME");
-      if (savedVolume !== null) {
-        setVolume(parseInt(savedVolume));
-      }
+      if (savedVolume !== null) setVolume(parseInt(savedVolume));
     };
-    load();
+    loadLocal();
   }, []);
 
   useEffect(() => {
@@ -141,36 +152,11 @@ export default function SettingsScreen() {
     );
   };
 
-  const toggleRequireScan = async (value: boolean) => {
-    setRequireScan(value);
-    await AsyncStorage.setItem("REQUIRE_SCAN", value.toString());
-  };
-
-  const toggleVolumeLock = async (value: boolean) => {
-    setVolumeLocked(value);
-    await AsyncStorage.setItem("VOLUME_LOCKED", value.toString());
-  };
-
-  // Toggle contactgegevens vergrendelen
-  const toggleContactLock = async (value: boolean) => {
-    setContactLocked(value);
-    await AsyncStorage.setItem("CONTACT_LOCKED", value.toString());
-  };
-
-  // Toggle scannen vergrendelen
-  const togglePatientScanLock = async (value: boolean) => {
-    setPatientScanLocked(value);
-    await AsyncStorage.setItem("PATIENT_SCAN_LOCKED", value.toString());
-  };
-
   const handleVolumeChange = async (value: number) => {
     const roundedVolume = Math.round(value);
     setVolume(roundedVolume);
-
     await AsyncStorage.setItem("MINO_VOLUME", roundedVolume.toString());
-
     if (!url) return;
-
     try {
       await fetch(`${url}/api/volume`, {
         method: "POST",
@@ -182,9 +168,29 @@ export default function SettingsScreen() {
     }
   };
 
+  // NIEUW: Updates naar Supabase in plaats van AsyncStorage
+  const toggleContactLock = async (value: boolean) => {
+    setContactLocked(value); // Optimistische UI update
+    await supabase
+      .from("shared_settings")
+      .update({ contact_locked: value })
+      .eq("id", 1);
+  };
+
+  const togglePatientScanLock = async (value: boolean) => {
+    setPatientScanLocked(value); // Optimistische UI update
+    await supabase
+      .from("shared_settings")
+      .update({ scan_locked: value })
+      .eq("id", 1);
+  };
+
   const toggleCameraAlwaysEnabled = async (value: boolean) => {
-    setCameraAlwaysEnabled(value);
-    await AsyncStorage.setItem("CAMERA_ALWAYS_ENABLED", value.toString());
+    setCameraAlwaysEnabled(value); // Optimistische UI update
+    await supabase
+      .from("shared_settings")
+      .update({ camera_always_enabled: value })
+      .eq("id", 1);
   };
 
   const testConnection = async () => {
@@ -219,7 +225,11 @@ export default function SettingsScreen() {
   }
 
   const resetZorgScenario = async () => {
-    await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
+    // Reset de noodtoegang in Supabase
+    await supabase
+      .from("shared_settings")
+      .update({ emergency_camera_unlocked: false })
+      .eq("id", 1);
     showModal(
       "Scenario Gereset",
       "De noodtoegang is ingetrokken en het scenario is gereset.",
@@ -234,6 +244,15 @@ export default function SettingsScreen() {
       "warning",
       async () => {
         await AsyncStorage.clear();
+        await supabase
+          .from("shared_settings")
+          .update({
+            contact_locked: false,
+            scan_locked: false,
+            camera_always_enabled: false,
+            emergency_camera_unlocked: false,
+          })
+          .eq("id", 1);
         setModalVisible(false);
         setTimeout(
           () =>
@@ -836,8 +855,6 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
   },
   card: { backgroundColor: "#1c1c1e", borderRadius: 12, padding: 16 },
-
-  // Let op: Ik heb 'accountRow', 'avatarCircle', 'avatarText' en 'accountName' ook uit de styles gehaald!
 
   inputRow: {
     flexDirection: "row",
