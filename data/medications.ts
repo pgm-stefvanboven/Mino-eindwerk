@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "../lib/supabase";
 
 export type Medication = {
   id: string;
@@ -10,21 +9,37 @@ export type Medication = {
   lastScannedAt?: number; // Houdt bij wanneer de barcode voor het laatst is gescand
 };
 
-const STORAGE_KEY = "MEDICATION_DB_STOCK";
-
 // Demo med ID (altijd bevestigbaar in de UI)
 export const DEMO_MED_ID = "6";
 
 // 1. The standard database (if you reset the app)
 export const INITIAL_GLOBAL_MEDS: Medication[] = [
-  { id: "1", name: "Paracetamol", dosage: "500mg", stock: 24 },
-  { id: "2", name: "Ibuprofen", dosage: "400mg", stock: 5 },
-  { id: "3", name: "Metoprolol", dosage: "50mg", stock: 8 },
-  { id: "4", name: "Vitamin D", dosage: "10mcg", stock: 60 },
-  { id: "5", name: "Dafalgan Forte", dosage: "1g", stock: 30 },
+  {
+    id: "1",
+    name: "Paracetamol",
+    dosage: "500mg",
+    stock: 24,
+    isOrdered: false,
+  },
+  { id: "2", name: "Ibuprofen", dosage: "400mg", stock: 5, isOrdered: false },
+  { id: "3", name: "Metoprolol", dosage: "50mg", stock: 8, isOrdered: false },
+  { id: "4", name: "Vitamin D", dosage: "10mcg", stock: 60, isOrdered: false },
+  {
+    id: "5",
+    name: "Dafalgan Forte",
+    dosage: "1g",
+    stock: 30,
+    isOrdered: false,
+  },
 
   // DEMO: altijd bevestigbaar scenario gebruikt dit medicijn
-  { id: "6", name: "Dafalgan Forte", dosage: "1g", stock: 15 },
+  {
+    id: "6",
+    name: "Dafalgan Forte",
+    dosage: "1g",
+    stock: 15,
+    isOrdered: false,
+  },
 ];
 
 // 2. The daily schedule (link times to Medication IDs)
@@ -45,44 +60,69 @@ const mergeMeds = (stored: Medication[], base: Medication[]) => {
   for (const m of stored) map.set(m.id, m);
 
   // Voeg ontbrekende meds toe vanuit base
+  let changed = false;
   for (const b of base) {
-    if (!map.has(b.id)) map.set(b.id, b);
+    if (!map.has(b.id)) {
+      map.set(b.id, b);
+      changed = true;
+    }
   }
 
-  return Array.from(map.values());
+  return { merged: Array.from(map.values()), changed };
 };
 
-// Get list (from memory or reset)
+// Get list (from Supabase)
 export const getMedications = async (): Promise<Medication[]> => {
   try {
-    const json = await AsyncStorage.getItem(STORAGE_KEY);
+    const { data, error } = await supabase
+      .from("medications")
+      .select("*")
+      .order("name", { ascending: true });
 
-    if (json) {
-      const stored: Medication[] = JSON.parse(json);
-
-      // Migratie: voeg ontbrekende default meds toe (zoals demo id "6")
-      const merged = mergeMeds(stored, INITIAL_GLOBAL_MEDS);
-
-      // Sla terug op als er iets bijgekomen is
-      if (merged.length !== stored.length) {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-      }
-      return merged;
-    } else {
-      await AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(INITIAL_GLOBAL_MEDS),
-      );
+    if (error) {
+      console.error("Fout bij ophalen uit Supabase:", error.message);
       return INITIAL_GLOBAL_MEDS;
     }
+
+    // Als de cloud database nog helemaal leeg is, vul deze dan met de default meds
+    if (!data || data.length === 0) {
+      console.log(
+        "Database is leeg, INITIAL_GLOBAL_MEDS worden in de cloud gezet...",
+      );
+      await supabase.from("medications").insert(INITIAL_GLOBAL_MEDS);
+      return INITIAL_GLOBAL_MEDS;
+    }
+
+    // Migratie: voeg ontbrekende default meds toe (zoals demo id "6") als ze niet in de cloud staan
+    const { merged, changed } = mergeMeds(
+      data as Medication[],
+      INITIAL_GLOBAL_MEDS,
+    );
+
+    // Sla terug op in de cloud als er iets ontbrak in de huidige tabel
+    if (changed) {
+      await saveMedications(merged);
+    }
+
+    return merged;
   } catch (e) {
+    console.error("Netwerk of onverwachte fout bij ophalen meds:", e);
     return INITIAL_GLOBAL_MEDS;
   }
 };
 
-// Save list
+// Save list (to Supabase)
 export const saveMedications = async (meds: Medication[]) => {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(meds));
+  try {
+    // Upsert zal bestaande ID's updaten en nieuwe ID's toevoegen
+    const { error } = await supabase.from("medications").upsert(meds);
+
+    if (error) {
+      console.error("Fout bij opslaan in Supabase:", error.message);
+    }
+  } catch (e) {
+    console.error("Netwerk of onverwachte fout bij opslaan meds:", e);
+  }
 };
 
 // Smart function: decrease stock based on ID and text (e.g. "3x" or "2x")

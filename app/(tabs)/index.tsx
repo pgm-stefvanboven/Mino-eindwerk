@@ -10,6 +10,7 @@ import {
   Modal,
   ActivityIndicator,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -51,6 +52,7 @@ const isPastDate = (date: Date) => {
 
 export default function VandaagScreen() {
   const { role } = useRole();
+  const router = useRouter();
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
@@ -411,77 +413,144 @@ export default function VandaagScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
           {/*  STOCK ALERT (Slimme Versie) */}
+          {/*  STOCK ALERT (Slimme Jury-proof Versie) */}
           {lowStockMeds.length > 0 &&
             (() => {
-              // Checken: zijn er nog medicijnen die NIET gemeld zijn?
               const unhandledCount = lowStockMeds.filter(
                 (m) => !m.isOrdered,
               ).length;
               const isAllHandled = unhandledCount === 0;
 
-              // Kleuren bepalen: Oranje als er actie nodig is, anders Blauw
-              const themeColor = isAllHandled ? "#60a5fa" : "#ffaa00";
-              const bgStyle = isAllHandled
-                ? styles.alertSectionHandled
-                : styles.alertSection;
+              // Bepaal de logica per rol
+              const isMantelzorger = role === "mantelzorger";
+
+              // Voor de patiënt is 'isAllHandled' goed nieuws (blauw).
+              // Voor de mantelzorger is 'isAllHandled' (gemeld door patiënt) een actiepunt (rood).
+              let themeColor = "";
+              let headerText = "";
+              let iconName = "";
+
+              if (isMantelzorger) {
+                themeColor = isAllHandled ? "#ef4444" : "#ffaa00";
+                headerText = isAllHandled
+                  ? "TAAK: Medicatie aankopen!"
+                  : "Voorraad patiënt is laag";
+                iconName = isAllHandled ? "cart" : "warning";
+              } else {
+                themeColor = isAllHandled ? "#60a5fa" : "#ffaa00";
+                headerText = isAllHandled
+                  ? `Gerustgesteld: ${contact.name || "familie"} is verwittigd`
+                  : "Bijna op! Meld het aan familie:";
+                iconName = isAllHandled ? "checkmark-circle" : "warning";
+              }
+
+              const bgStyle = {
+                backgroundColor: `${themeColor}15`,
+                borderColor: `${themeColor}40`,
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+                marginBottom: 20,
+              };
 
               return (
                 <View style={bgStyle}>
                   <View style={styles.alertHeader}>
                     <Ionicons
-                      name={isAllHandled ? "checkmark-circle" : "warning"}
+                      name={iconName as any}
                       size={18}
                       color={themeColor}
                     />
                     <Text style={[styles.alertTitle, { color: themeColor }]}>
-                      {isAllHandled
-                        ? "Alles is gemeld aan familie"
-                        : "Bijna op! Bijbestellen:"}
+                      {headerText}
                     </Text>
                   </View>
 
                   <View style={{ marginTop: 12 }}>
                     {lowStockMeds.map((med) => {
                       const isReported = med.isOrdered === true;
-
                       const timesPerDay =
                         tasks.filter((t) => t.medId === med.id).length || 1;
                       const daysLeft = Math.floor(med.stock / timesPerDay);
 
+                      // Kleur van de individuele pillen-chip
+                      const chipBorderColor = isReported
+                        ? isMantelzorger
+                          ? "rgba(239, 68, 68, 0.4)" // Rood voor mantelzorger
+                          : "rgba(96, 165, 250, 0.4)" // Blauw voor patiënt
+                        : "rgba(255, 170, 0, 0.4)"; // Oranje als standaard waarschuwing
+
                       return (
-                        <View
+                        <TouchableOpacity
                           key={med.id}
-                          style={
-                            isReported
-                              ? styles.stockChipReported
-                              : styles.stockChip
-                          }
+                          activeOpacity={0.7} // Zorgt voor de visuele klik-feedback
+                          onPress={() => router.push("/medications")} // De snelkoppeling!
+                          style={{
+                            backgroundColor: "rgba(0,0,0,0.3)",
+                            paddingHorizontal: 16,
+                            paddingVertical: 14,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: chipBorderColor,
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 8,
+                          }}
                         >
                           <Text style={styles.stockChipName}>{med.name}</Text>
 
-                          {isReported ? (
-                            <View
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                gap: 6,
-                              }}
-                            >
-                              <Text style={styles.stockChipCountReported}>
-                                REEDS GEMELD
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 10,
+                            }}
+                          >
+                            {isReported ? (
+                              <View
+                                style={{
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  gap: 6,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    color: isMantelzorger
+                                      ? "#ef4444"
+                                      : "#60a5fa",
+                                    fontWeight: "bold",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {isMantelzorger
+                                    ? "AANKOPEN BIJ APOTHEEK"
+                                    : "REEDS GEMELD"}
+                                </Text>
+                                <Ionicons
+                                  name={
+                                    isMantelzorger
+                                      ? "alert-circle"
+                                      : "checkmark-circle"
+                                  }
+                                  size={16}
+                                  color={isMantelzorger ? "#ef4444" : "#60a5fa"}
+                                />
+                              </View>
+                            ) : (
+                              <Text style={styles.stockChipCount}>
+                                Nog {med.stock} stuks (ca. {daysLeft} dgn)
                               </Text>
-                              <Ionicons
-                                name="checkmark-circle"
-                                size={16}
-                                color="#60a5fa"
-                              />
-                            </View>
-                          ) : (
-                            <Text style={styles.stockChipCount}>
-                              Nog {med.stock} stuks (ca. {daysLeft} dgn)
-                            </Text>
-                          )}
-                        </View>
+                            )}
+
+                            <Ionicons
+                              name="chevron-forward"
+                              size={18}
+                              color="rgba(255,255,255,0.3)"
+                            />
+                          </View>
+                        </TouchableOpacity>
                       );
                     })}
                   </View>

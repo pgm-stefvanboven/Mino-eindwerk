@@ -106,7 +106,6 @@ export default function MedicijnLijstScreen() {
   useEffect(() => {
     // 1. Haal de initiële status op
     const fetchSharedSettings = async () => {
-      // Verander "scan_locked" naar "*" of selecteer de velden expliciet
       const { data, error } = await supabase
         .from("shared_settings")
         .select("*")
@@ -115,8 +114,6 @@ export default function MedicijnLijstScreen() {
 
       if (data && !error) {
         setPatientScanLocked(data.scan_locked);
-
-        // NIEUW: Stel de mantelzorger-gegevens direct in
         if (data.contact_name) setCaregiverName(data.contact_name);
         if (data.contact_relation) setCaregiverRelation(data.contact_relation);
       }
@@ -124,20 +121,17 @@ export default function MedicijnLijstScreen() {
 
     fetchSharedSettings();
 
-    // 2. Abonneer op realtime wijzigingen
-    const channel = supabase
+    // 2. Abonneer op realtime wijzigingen voor settings
+    const settingsChannel = supabase
       .channel("public:medicijnlijst_shared_settings")
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "shared_settings" },
         (payload) => {
           const updatedSettings = payload.new;
-
           if (updatedSettings.scan_locked !== undefined) {
             setPatientScanLocked(updatedSettings.scan_locked);
           }
-
-          // NIEUW: Update contactgegevens direct als de mantelzorger ze wijzigt
           if (updatedSettings.contact_name !== undefined) {
             setCaregiverName(updatedSettings.contact_name);
           }
@@ -148,9 +142,23 @@ export default function MedicijnLijstScreen() {
       )
       .subscribe();
 
-    // 3. Cleanup bij unmounten
+    // 3. NIEUW: Abonneer op realtime wijzigingen voor medicijnen (Supabase Sync)
+    const medsChannel = supabase
+      .channel("public:medications_sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "medications" },
+        () => {
+          // Haal de lijst direct opnieuw op als er in de cloud iets verandert
+          getMedications().then(setMeds);
+        },
+      )
+      .subscribe();
+
+    // 4. Cleanup bij unmounten
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(settingsChannel);
+      supabase.removeChannel(medsChannel);
     };
   }, []);
 
@@ -529,10 +537,14 @@ export default function MedicijnLijstScreen() {
           let textColor = "#666";
 
           if (isReported) {
-            statusColor = "#60a5fa";
-            statusIcon = "mail-unread";
-            statusText = "Gemeld aan familie";
-            textColor = "#60a5fa";
+            // Rood/Winkelkar voor de mantelzorger, Blauw/Check voor de patiënt
+            statusColor = role === "mantelzorger" ? "#ef4444" : "#60a5fa";
+            statusIcon = role === "mantelzorger" ? "cart" : "mail-unread";
+            statusText =
+              role === "mantelzorger"
+                ? "Aankopen bij apotheek"
+                : "Gemeld aan familie";
+            textColor = role === "mantelzorger" ? "#ef4444" : "#60a5fa";
           } else if (isLow) {
             statusColor = "#ffaa00";
             statusIcon = "alert";
@@ -952,7 +964,32 @@ export default function MedicijnLijstScreen() {
                   isSending && { opacity: 0.7 },
                   selectedMed.isOrdered && styles.notifyBtnOrdered,
                 ]}
-                onPress={() => notifyCaregiver(selectedMed.name)}
+                onPress={() => {
+                  if (role === "mantelzorger") {
+                    // DE TUSSENSTAP VOOR DE MANTELZORGER: "Ik heb het besteld"
+                    const markAsOrdered = async () => {
+                      setIsSending(true);
+                      const updatedList = meds.map((m) =>
+                        m.id === selectedMed.id ? { ...m, isOrdered: true } : m,
+                      );
+                      setMeds(updatedList);
+                      await saveMedications(updatedList);
+                      setSelectedMed({ ...selectedMed, isOrdered: true });
+
+                      setTimeout(() => {
+                        setIsSending(false);
+                        showCustomSuccess(
+                          "Aangeduid als besteld",
+                          "De patiënt ziet nu dat je dit hebt geregeld.",
+                        );
+                      }, 1000);
+                    };
+                    markAsOrdered();
+                  } else {
+                    // DE NORMALE FLOW VOOR DE PATIËNT: Push sturen
+                    notifyCaregiver(selectedMed.name);
+                  }
+                }}
               >
                 {isSending ? (
                   <ActivityIndicator color="white" />
@@ -962,15 +999,21 @@ export default function MedicijnLijstScreen() {
                       name={
                         selectedMed.isOrdered
                           ? "checkmark-circle"
-                          : "paper-plane-outline"
+                          : role === "mantelzorger"
+                            ? "cart"
+                            : "paper-plane-outline"
                       }
                       size={20}
                       color="white"
                     />
                     <Text style={styles.notifyBtnText}>
                       {selectedMed.isOrdered
-                        ? "REEDS GEMELD AAN FAMILIE"
-                        : `VRAAG AAN ${caregiverName.toUpperCase()} ${caregiverRelation ? `(${caregiverRelation.toUpperCase()})` : ""}`}
+                        ? role === "mantelzorger"
+                          ? "AANGEDUID ALS BESTELD"
+                          : "REEDS GEMELD AAN FAMILIE"
+                        : role === "mantelzorger"
+                          ? "MARKEER ALS BESTELD (GERUSTSTELLEN)"
+                          : `VRAAG AAN ${caregiverName.toUpperCase()} ${caregiverRelation ? `(${caregiverRelation.toUpperCase()})` : ""}`}
                     </Text>
                   </>
                 )}
