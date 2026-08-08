@@ -535,7 +535,7 @@ def camera_warning():
 # INVENTORY NOTIFICATION
 # =========================================================
 
-@app.post("/inventory_warning")
+@app.route("/inventory_warning", methods=["GET", "POST"])
 def inventory_warning():
     print("Voorraad bijna op waarschuwing afspelen.")
     speak("Inventory.mp3")

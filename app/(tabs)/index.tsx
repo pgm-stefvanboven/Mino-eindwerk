@@ -247,30 +247,35 @@ export default function VandaagScreen() {
     const updatedMeds = await getMedications();
     setLowStockMeds(updatedMeds.filter((m) => m.stock < 10));
 
+    // 1. AWAIT pauzeert de code hier perfect totdat de robot klaar is met de eerste audio ("Medication-done.mp3")
+    await Pi.confirmMed(id).catch(console.error);
+    Pi.stopReminder().catch(() => {});
+
     const currentMed = updatedMeds.find((m) => m.id === task.medId);
 
+    // Controleer of de voorraad kritiek is
     if (currentMed && currentMed.stock < 10 && !currentMed.isOrdered) {
-      // 1. Bereken de resterende dagen
-      const timesPerDay =
-        tasks.filter((t) => t.medId === task.medId).length || 1;
-      const daysLeft = Math.floor(currentMed.stock / timesPerDay);
-
-      // 2. Trigger de robot om de vaste MP3 te spelen
+      // Omdat we hebben gewacht op het inname-geluidje, is de speaker nu vrij!
       try {
+        console.log("Trigger inventory warning...");
         await fetch(`${ROBOT_API_URL}/inventory_warning`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
         });
-      } catch {}
+      } catch (err) {
+        console.error("Fout bij afspelen inventory_warning:", err);
+      }
 
       try {
+        console.log("Start restock timer...");
         await fetch(`${ROBOT_API_URL}/start_restock_timer`, {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
         });
-      } catch {}
+      } catch (err) {
+        console.error("Fout bij starten restock timer:", err);
+      }
     }
-
-    Pi.confirmMed(id).catch(console.error);
-    Pi.stopReminder().catch(() => {});
 
     await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
     setEmergencyActive(false);
@@ -395,19 +400,12 @@ export default function VandaagScreen() {
                     </Text>
                   </View>
 
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={{ marginTop: 10 }}
-                  >
+                  <View style={{ marginTop: 12 }}>
                     {lowStockMeds.map((med) => {
                       const isReported = med.isOrdered === true;
 
-                      // BEREKENING: Aantal dagen resterend
-                      // 1. Kijk hoe vaak dit medicijn vandaag in de lijst ('tasks') staat
                       const timesPerDay =
                         tasks.filter((t) => t.medId === med.id).length || 1;
-                      // 2. Deel de voorraad door het aantal innames per dag (naar beneden afgerond)
                       const daysLeft = Math.floor(med.stock / timesPerDay);
 
                       return (
@@ -426,15 +424,15 @@ export default function VandaagScreen() {
                               style={{
                                 flexDirection: "row",
                                 alignItems: "center",
-                                gap: 4,
+                                gap: 6,
                               }}
                             >
                               <Text style={styles.stockChipCountReported}>
-                                GEMELD
+                                REEDS GEMELD
                               </Text>
                               <Ionicons
-                                name="checkmark"
-                                size={10}
+                                name="checkmark-circle"
+                                size={16}
                                 color="#60a5fa"
                               />
                             </View>
@@ -446,7 +444,7 @@ export default function VandaagScreen() {
                         </View>
                       );
                     })}
-                  </ScrollView>
+                  </View>
                 </View>
               );
             })()}
@@ -774,36 +772,36 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   stockChip: {
-    backgroundColor: "#222",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginRight: 8,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#333",
+    borderColor: "rgba(255, 170, 0, 0.4)",
     flexDirection: "row",
-    gap: 6,
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
   },
   stockChipReported: {
-    backgroundColor: "rgba(96, 165, 250, 0.1)", // Heel licht blauw
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginRight: 8,
+    backgroundColor: "rgba(96, 165, 250, 0.1)",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.3)", // Blauw randje
+    borderColor: "rgba(96, 165, 250, 0.3)",
     flexDirection: "row",
-    gap: 6,
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 8,
   },
-
   stockChipCountReported: {
     color: "#60a5fa",
     fontWeight: "bold",
-    fontSize: 10,
+    fontSize: 12,
   },
-  stockChipName: { color: "white", fontSize: 12 },
-  stockChipCount: { color: "#ffaa00", fontWeight: "bold", fontSize: 12 },
+  stockChipName: { color: "white", fontSize: 15, fontWeight: "bold" },
+  stockChipCount: { color: "#ffaa00", fontWeight: "bold", fontSize: 13 },
   timelineContainer: { marginTop: 0 },
   compactCard: { flexDirection: "row", height: 70 },
   timelineSidebar: { width: 30, alignItems: "center", paddingTop: 8 },
