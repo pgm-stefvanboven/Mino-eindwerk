@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -37,6 +37,18 @@ const DEMO_MISS_LIMIT_SECONDS = 5;
 // Zorg dat dit IP klopt met je server
 const ROBOT_API_URL = "http://10.178.148.75:5001";
 
+// --- DATE LOGIC ---
+const isSameDay = (d1: Date, d2: Date) =>
+  d1.getDate() === d2.getDate() &&
+  d1.getMonth() === d2.getMonth() &&
+  d1.getFullYear() === d2.getFullYear();
+const isToday = (date: Date) => isSameDay(date, new Date());
+const isPastDate = (date: Date) => {
+  const t = new Date();
+  t.setHours(0, 0, 0, 0);
+  return date < t;
+};
+
 export default function VandaagScreen() {
   const { role } = useRole();
 
@@ -46,6 +58,7 @@ export default function VandaagScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lowStockMeds, setLowStockMeds] = useState<Medication[]>([]);
+  const inventoryWarningPlayed = useRef(false);
   const [takingMedication, setTakingMedication] = useState<number | null>(null);
   const [emergencyActive, setEmergencyActive] = useState(false);
   const [alarmStage, setAlarmStage] = useState<
@@ -64,17 +77,44 @@ export default function VandaagScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // --- DATE LOGIC ---
-  const isSameDay = (d1: Date, d2: Date) =>
-    d1.getDate() === d2.getDate() &&
-    d1.getMonth() === d2.getMonth() &&
-    d1.getFullYear() === d2.getFullYear();
-  const isToday = (date: Date) => isSameDay(date, new Date());
-  const isPastDate = (date: Date) => {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    return date < t;
-  };
+  useEffect(() => {
+    // Alleen uitvoeren op het Vandaag-scherm
+    if (!isToday(selectedDate)) return;
+
+    // Geen voorraadwaarschuwing nodig
+    const needsWarning = lowStockMeds.some(
+      (med) => med.stock < 10 && !med.isOrdered,
+    );
+
+    if (!needsWarning) return;
+
+    // Voorkom dat het geluid iedere render/focus opnieuw afspeelt
+    if (inventoryWarningPlayed.current) return;
+
+    inventoryWarningPlayed.current = true;
+
+    console.log("Voorraad bijna op - Inventory.mp3 afspelen");
+
+    fetch(`${ROBOT_API_URL}/inventory_warning`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Inventory warning HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log("Inventory warning response:", data);
+      })
+      .catch((error) => {
+        console.error("Inventory warning kon niet worden afgespeeld:", error);
+        inventoryWarningPlayed.current = false;
+      });
+  }, [lowStockMeds, selectedDate]);
+
   const isTooFarBack = () => {
     const t = new Date();
     t.setHours(0, 0, 0, 0);
