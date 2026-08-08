@@ -1,27 +1,22 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FlatList,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { useRole } from "../context/RoleContext";
-import * as Notifications from "expo-notifications";
+import { resolveNotificationRoute } from "../lib/notificationRouting";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// NOTE: Notifications.setNotificationHandler(...) now lives ONLY in
+// app/_layout.tsx — no need to set it again here.
 
 type Notification = {
   id: string;
@@ -35,51 +30,69 @@ type Notification = {
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const { role } = useRole();
+  const router = useRouter();
+
+  // See app/(tabs)/_layout.tsx for the full explanation of this pattern.
+  // Short version: recreating a supabase channel with the same name every
+  // time `role` changed (or the screen re-focused) could race with the
+  // previous channel's async unsubscribe and throw
+  // "cannot add `postgres_changes` callbacks ... after `subscribe()`".
+  // Fix: one channel per real mount, unique name, role read from a ref.
+  const roleRef = useRef(role);
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
 
   useEffect(() => {
-    // 1. Haal de gefilterde lijst op bij het laden
     loadNotifications();
 
-    // 2. REALTIME LISTENER: Luister naar nieuwe gebeurtenissen
-    const channel = supabase
-      .channel("public:notifications_list")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            const newNotification = payload.new as Notification;
+    const channelName = `notifications-list-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase.channel(channelName);
 
-            // FILTER: Voorkom dat de melding in de lijst komt als de rol niet klopt
-            if (role === "patient" && newNotification.type !== "privacy")
-              return;
-            if (role === "mantelzorger" && newNotification.type === "privacy")
-              return;
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "notifications" },
+      (payload) => {
+        const currentRole = roleRef.current;
 
-            setNotifications((prev) => [newNotification, ...prev]);
-          } else if (payload.eventType === "UPDATE") {
-            const updatedNotification = payload.new as Notification;
-            setNotifications((prev) =>
-              prev.map((notif) =>
-                notif.id === updatedNotification.id
-                  ? updatedNotification
-                  : notif,
-              ),
-            );
-          } else if (payload.eventType === "DELETE") {
-            const deletedNotification = payload.old as Notification;
-            setNotifications((prev) =>
-              prev.filter((notif) => notif.id !== deletedNotification.id),
-            );
-          }
-        },
-      )
-      .subscribe();
+        if (payload.eventType === "INSERT") {
+          const newNotification = payload.new as Notification;
+          if (currentRole === "patient" && newNotification.type !== "privacy")
+            return;
+          if (
+            currentRole === "mantelzorger" &&
+            newNotification.type === "privacy"
+          )
+            return;
+          setNotifications((prev) => [newNotification, ...prev]);
+        } else if (payload.eventType === "UPDATE") {
+          const updatedNotification = payload.new as Notification;
+          setNotifications((prev) =>
+            prev.map((notif) =>
+              notif.id === updatedNotification.id ? updatedNotification : notif,
+            ),
+          );
+        } else if (payload.eventType === "DELETE") {
+          const deletedNotification = payload.old as Notification;
+          setNotifications((prev) =>
+            prev.filter((notif) => notif.id !== deletedNotification.id),
+          );
+        }
+      },
+    );
+
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [role]); // Voeg role toe als dependency zodat hij herlaadt bij een wissel
+  }, []);
+
+  // Re-run the initial load whenever role changes (the realtime channel
+  // above no longer needs to be recreated for this — see comment above).
+  useEffect(() => {
+    loadNotifications();
+  }, [role]);
 
   const loadNotifications = async () => {
     let query = supabase
@@ -87,38 +100,92 @@ export default function NotificationsScreen() {
       .select("*")
       .order("created_at", { ascending: false });
 
-    // Pas de query aan op basis van de rol
     if (role === "patient") {
-      query = query.eq("type", "privacy"); // Patiënt ziet ENKEL privacy meldingen
+      query = query.eq("type", "privacy");
     } else if (role === "mantelzorger") {
-      query = query.neq("type", "privacy"); // Mantelzorger ziet ALLES BEHALVE privacy meldingen
+      query = query.neq("type", "privacy");
     }
 
     const { data, error } = await query;
-
     if (error) {
       console.error(error);
       return;
     }
-
     setNotifications(data ?? []);
   };
 
   const markAsRead = async (id: string, isRead: boolean) => {
     if (isRead) return;
-
     setNotifications((prev) =>
       prev.map((notif) => (notif.id === id ? { ...notif, read: true } : notif)),
     );
+    await supabase.from("notifications").update({ read: true }).eq("id", id);
+  };
 
-    const { error } = await supabase
-      .from("notifications")
-      .update({ read: true })
-      .eq("id", id);
+  // --- ACTIE 1: Individueel Verwijderen (Long Press) ---
+  const confirmDelete = (id: string) => {
+    Alert.alert(
+      "Melding Verwijderen",
+      "Wil je deze melding definitief uit de lijst verwijderen?",
+      [
+        { text: "Annuleren", style: "cancel" },
+        {
+          text: "Verwijderen",
+          style: "destructive",
+          onPress: async () => {
+            setNotifications((prev) => prev.filter((n) => n.id !== id));
+            await supabase.from("notifications").delete().eq("id", id);
+          },
+        },
+      ],
+    );
+  };
 
-    if (error) {
-      console.error("Fout bij updaten read status:", error);
+  // --- ACTIE 2: Alles Verwijderen (Outlook-stijl) ---
+  const confirmDeleteAll = () => {
+    Alert.alert(
+      "Alles Verwijderen",
+      "Weet je zeker dat je alle meldingen in deze lijst definitief wilt verwijderen?",
+      [
+        { text: "Annuleren", style: "cancel" },
+        {
+          text: "Verwijder Alles",
+          style: "destructive",
+          onPress: async () => {
+            const idsToDelete = notifications.map((n) => n.id);
+            setNotifications([]);
+
+            const { error } = await supabase
+              .from("notifications")
+              .delete()
+              .in("id", idsToDelete);
+
+            if (error) console.error("Fout bij alles verwijderen:", error);
+          },
+        },
+      ],
+    );
+  };
+
+  // --- ACTIE 3: Klikbaar & Navigeren naar het juiste scherm ---
+  const handleNotificationPress = (item: Notification) => {
+    // IMPORTANT: emergency notifications are special. app/(tabs)/robot.tsx
+    // uses `read: false` on an emergency notification as its signal that
+    // the camera still needs to be auto-unlocked for the caregiver. If we
+    // mark it read here, the moment you tap it to go look at the camera,
+    // robot.tsx's unread-count check finds nothing and never unlocks.
+    // Only handleEmergencyResolved() in robot.tsx should mark these read,
+    // once the caregiver has actually dealt with the situation.
+    if (item.type !== "emergency") {
+      markAsRead(item.id, item.read);
     }
+
+    const route = resolveNotificationRoute({
+      type: item.type,
+      title: item.title,
+      body: item.body,
+    });
+    router.push(route as any);
   };
 
   const getTypeConfig = (type: string | undefined, originalTitle: string) => {
@@ -144,7 +211,7 @@ export default function NotificationsScreen() {
           iconName: "shield-checkmark",
           iconColor: "#8b5cf6",
           title: "Privacy",
-        }; // Nieuwe layout voor patiënt
+        };
       default:
         return {
           iconName: "notifications",
@@ -166,110 +233,100 @@ export default function NotificationsScreen() {
       hour: "2-digit",
       minute: "2-digit",
     });
-
     return `${datePart} • ${timePart}`;
   };
 
-  // VERWIJDERD: Het harde blokkeerscherm voor de patiënt is hier weggehaald zodat de patiënt de privacy-melding kan lezen.
-
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.pageTitle}>Recente Meldingen</Text>
+          <Text style={styles.subTitle}>Lang indrukken om te verwijderen.</Text>
+        </View>
+
+        {/* Outlook-stijl Verwijder Alles Knop */}
+        {notifications.length > 0 && (
+          <TouchableOpacity
+            onPress={confirmDeleteAll}
+            style={styles.deleteAllBtn}
+            activeOpacity={0.6}
+          >
+            <Ionicons name="trash-outline" size={20} color="#ef4444" />
+          </TouchableOpacity>
+        )}
+      </View>
+
       <FlatList
         data={notifications}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingBottom: 20 }}
         renderItem={({ item }) => {
           const config = getTypeConfig(item.type, item.title);
+          const isUnread = !item.read;
 
           return (
             <TouchableOpacity
               activeOpacity={0.7}
-              onPress={() => markAsRead(item.id, item.read)}
-              style={{
-                backgroundColor: "#1c1c1e",
-                padding: 16,
-                borderRadius: 12,
-                marginBottom: 12,
-                flexDirection: "row",
-                alignItems: "flex-start",
-                borderWidth: 1,
-                borderColor: item.read
-                  ? "transparent"
-                  : "rgba(255, 68, 68, 0.3)",
-              }}
+              onPress={() => handleNotificationPress(item)}
+              onLongPress={() => confirmDelete(item.id)}
+              delayLongPress={400}
+              style={[
+                styles.notificationCard,
+                {
+                  backgroundColor: isUnread
+                    ? "rgba(255,255,255,0.08)"
+                    : "#1c1c1e",
+                  borderLeftColor: config.iconColor,
+                  borderColor: isUnread
+                    ? "rgba(255,255,255,0.15)"
+                    : "transparent",
+                },
+              ]}
             >
-              <Ionicons
-                name={config.iconName as any}
-                size={26}
-                color={config.iconColor}
-                style={{ marginRight: 16, marginTop: 2 }}
-              />
+              <View
+                style={[
+                  styles.iconWrapper,
+                  { backgroundColor: `${config.iconColor}15` },
+                ]}
+              >
+                <Ionicons
+                  name={config.iconName as any}
+                  size={24}
+                  color={config.iconColor}
+                />
+              </View>
 
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={{
-                    color: "white",
-                    fontSize: 16,
-                    fontWeight: item.read ? "600" : "bold",
-                    marginBottom: 4,
-                  }}
-                >
-                  {config.title}
-                </Text>
+              <View style={styles.textContainer}>
+                <View style={styles.titleRow}>
+                  <Text style={[styles.title, isUnread && styles.titleUnread]}>
+                    {config.title}
+                  </Text>
+                  {isUnread && <View style={styles.unreadDot} />}
+                </View>
 
-                <Text
-                  style={{
-                    color: "#d4d4d8",
-                    marginBottom: 8,
-                    fontSize: 14,
-                    lineHeight: 20,
-                  }}
-                >
-                  {item.body}
-                </Text>
-
-                <Text
-                  style={{
-                    color: "#71717a",
-                    fontSize: 12,
-                  }}
-                >
+                <Text style={styles.bodyText}>{item.body}</Text>
+                <Text style={styles.timeText}>
                   {formatDateTime(item.created_at)}
                 </Text>
               </View>
 
-              {!item.read && (
-                <View
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 5,
-                    backgroundColor: "#ff4444",
-                    marginTop: 6,
-                    marginLeft: 8,
-                  }}
+              <View style={styles.chevronWrapper}>
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color="rgba(255,255,255,0.4)"
                 />
-              )}
+              </View>
             </TouchableOpacity>
           );
         }}
         ListEmptyComponent={
-          <View style={{ marginTop: 40 }}>
-            <Text
-              style={{
-                color: "white",
-                fontSize: 18,
-                fontWeight: "600",
-                marginBottom: 8,
-              }}
-            >
-              Nog geen meldingen
-            </Text>
-            <Text
-              style={{
-                color: "#a1a1aa",
-                lineHeight: 22,
-              }}
-            >
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIconCircle}>
+              <Ionicons name="notifications-off" size={40} color="#333" />
+            </View>
+            <Text style={styles.emptyTitle}>Geen nieuwe meldingen</Text>
+            <Text style={styles.emptyText}>
               {role === "patient"
                 ? "Systeemmeldingen over uw privacy verschijnen hier."
                 : "Meldingen van Mino verschijnen hier zodra er een gebeurtenis plaatsvindt."}
@@ -285,6 +342,116 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#09090b",
-    padding: 20,
+    paddingHorizontal: 20,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 15,
+    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+  },
+  pageTitle: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "bold",
+    letterSpacing: 0.5,
+  },
+  subTitle: {
+    color: "#71717a",
+    fontSize: 12,
+    marginTop: 4,
+  },
+  deleteAllBtn: {
+    padding: 10,
+    backgroundColor: "rgba(239, 68, 68, 0.1)",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.3)",
+  },
+  notificationCard: {
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    borderLeftWidth: 4,
+    borderWidth: 1,
+  },
+  iconWrapper: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 16,
+  },
+  textContainer: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  title: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  titleUnread: {
+    fontWeight: "900",
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#00f0ff",
+    marginLeft: 8,
+  },
+  bodyText: {
+    color: "#d4d4d8",
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  timeText: {
+    color: "#71717a",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  chevronWrapper: {
+    marginLeft: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    width: 24,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    marginTop: 60,
+    paddingHorizontal: 20,
+  },
+  emptyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
+  emptyText: {
+    color: "#a1a1aa",
+    textAlign: "center",
+    lineHeight: 22,
   },
 });

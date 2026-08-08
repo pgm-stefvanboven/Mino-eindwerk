@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -10,7 +11,7 @@ import {
   Modal,
   ActivityIndicator,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -53,10 +54,12 @@ const isPastDate = (date: Date) => {
 export default function VandaagScreen() {
   const { role } = useRole();
   const router = useRouter();
+  const params = useLocalSearchParams<{ privacyAlert?: string }>();
 
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [now, setNow] = useState(new Date());
   const [showDemoModal, setShowDemoModal] = useState(false);
+  const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lowStockMeds, setLowStockMeds] = useState<Medication[]>([]);
@@ -78,6 +81,84 @@ export default function VandaagScreen() {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Arrived here via a "privacy" notification tap (see
+  // lib/notificationRouting.ts, which routes privacy notifications to
+  // "/?privacyAlert=1"). Show the reassuring dialog, then clear the param
+  // so navigating away and back (or a re-render) doesn't reopen it.
+  // (Kept as a fallback path — the realtime effect below is the primary
+  // trigger now, since no push is actually sent for "privacy" type.)
+  useEffect(() => {
+    if (!params.privacyAlert) return;
+    setPrivacyModalVisible(true);
+    router.setParams({ privacyAlert: undefined } as any);
+  }, [params.privacyAlert]);
+
+  // Show the privacy dialog automatically the instant a caregiver's
+  // camera access is unlocked (see app/(tabs)/robot.tsx's
+  // startCareSession / handleEmergencyResolved / lockEmergencyAccess),
+  // and hide it automatically the instant access ends — no notification
+  // tap required, and it doubles as the "closes automatically as soon as
+  // the camera stops" behavior. Only relevant to the patient; the
+  // caregiver who's actually watching doesn't need to be told about it.
+  useEffect(() => {
+    if (role !== "patient") return;
+
+    let isActive = true;
+    let wasUnlocked = false;
+
+    const applyStatus = (
+      emergencyUnlocked: boolean,
+      alwaysEnabled: boolean,
+    ) => {
+      const isUnlocked = emergencyUnlocked && !alwaysEnabled;
+      if (isUnlocked && !wasUnlocked) {
+        setPrivacyModalVisible(true);
+      } else if (!isUnlocked && wasUnlocked) {
+        setPrivacyModalVisible(false);
+      }
+      wasUnlocked = isUnlocked;
+    };
+
+    const loadCameraStatus = async () => {
+      const { data } = await supabase
+        .from("shared_settings")
+        .select("emergency_camera_unlocked, camera_always_enabled")
+        .eq("id", 1)
+        .single();
+
+      if (data && isActive) {
+        applyStatus(data.emergency_camera_unlocked, data.camera_always_enabled);
+      }
+    };
+
+    loadCameraStatus();
+
+    const channelName = `home-camera-status-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "shared_settings" },
+        (payload) => {
+          if (!isActive) return;
+          const updated = payload.new as {
+            emergency_camera_unlocked: boolean;
+            camera_always_enabled: boolean;
+          };
+          applyStatus(
+            updated.emergency_camera_unlocked,
+            updated.camera_always_enabled,
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      supabase.removeChannel(channel);
+    };
+  }, [role]);
 
   useEffect(() => {
     // Alleen uitvoeren op het Vandaag-scherm
@@ -810,6 +891,35 @@ export default function VandaagScreen() {
             <TouchableOpacity
               style={styles.modalButton}
               onPress={() => setShowDemoModal(false)}
+            >
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reassuring dialog shown when a "privacy" notification is tapped */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={privacyModalVisible}
+        onRequestClose={() => setPrivacyModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View
+              style={[styles.modalIconCircle, { backgroundColor: "#8b5cf6" }]}
+            >
+              <Ionicons name="shield-checkmark" size={32} color="#fff" />
+            </View>
+            <Text style={styles.modalTitle}>Camera-toegang actief</Text>
+            <Text style={styles.modalText}>
+              {(contact.name || "Uw mantelzorger") +
+                " bekijkt op dit moment de camerabeelden om te controleren of alles goed met u gaat. Dit venster sluit automatisch zodra de camera stopt."}
+            </Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setPrivacyModalVisible(false)}
             >
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>

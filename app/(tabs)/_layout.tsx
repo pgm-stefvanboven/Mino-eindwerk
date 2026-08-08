@@ -1,25 +1,13 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import { Tabs, useRouter, usePathname } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View, Text, Platform } from "react-native";
 import { useRole } from "../../context/RoleContext";
 import { supabase } from "../../lib/supabase";
 
-// --- NIEUW: PUSH IMPORTS ---
+// --- PUSH IMPORTS ---
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-
-// --- NIEUW: PUSH HANDLER ---
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
 
 export default function TabLayout() {
   const router = useRouter();
@@ -28,7 +16,15 @@ export default function TabLayout() {
 
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // --- NIEUW: REGISTREER GSM VOOR PUSH MELDINGEN ---
+  // Keep the latest role in a ref so the realtime callback (set up once,
+  // see below) always reads the current role without us needing to tear
+  // down and recreate the channel every time role changes.
+  const roleRef = useRef(role);
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
+
+  // --- REGISTREER GSM VOOR PUSH MELDINGEN ---
   useEffect(() => {
     async function registerForPushNotificationsAsync() {
       console.log("🛠️ Push Check gestart. Huidige rol is:", role);
@@ -64,7 +60,6 @@ export default function TabLayout() {
 
         console.log("✅ Toestemming is in orde! Token ophalen...");
 
-        // Haal de token op met JOUW échte project ID
         const tokenData = await Notifications.getExpoPushTokenAsync({
           projectId: "4137b61f-247e-4811-aea5-a53fc50ba7d7",
         }).catch((err) => {
@@ -77,7 +72,6 @@ export default function TabLayout() {
         const token = tokenData.data;
         console.log("🚀 Nieuwe Push Token gegenereerd:", token);
 
-        // Sla de token op in Supabase
         const { error } = await supabase
           .from("shared_settings")
           .update({ caregiver_push_token: token })
@@ -110,37 +104,52 @@ export default function TabLayout() {
     fetchUnreadCount();
   }, [pathname, role]);
 
+  // REALTIME: Luister naar wijzigingen in de notificaties tabel.
+  // IMPORTANT: this effect now runs ONCE per real mount (deps: []).
+  // It used to depend on [role], which meant that every role switch (and
+  // every Expo Router "screen freeze/reconnect" when you left and came
+  // back to this tab) tore the channel down and immediately recreated one
+  // with the SAME name ("public:notifications"). supabase-js unsubscribes
+  // asynchronously, so the new channel() call would sometimes get handed
+  // back the still-being-removed old instance — which already had
+  // .subscribe() called on it — and .on() would throw:
+  // "cannot add `postgres_changes` callbacks ... after `subscribe()`".
+  //
+  // Fix: give every mount its own unique channel name so it can never
+  // collide with a channel that's still being torn down, and read role
+  // from roleRef so we don't need to recreate the channel at all.
   useEffect(() => {
-    // Haal direct het aantal op bij het laden
     fetchUnreadCount();
 
-    // REALTIME: Luister naar wijzigingen in de notificaties tabel!
-    const channel = supabase
-      .channel("public:notifications")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
-        () => {
-          fetchUnreadCount();
-        },
-      )
-      .subscribe();
+    const channelName = `notifications-badge-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase.channel(channelName);
+
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "notifications" },
+      () => {
+        fetchUnreadCount();
+      },
+    );
+
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [role]); // Opnieuw initialiseren als de rol verandert
+  }, []);
 
   const fetchUnreadCount = async () => {
+    const currentRole = roleRef.current;
+
     let query = supabase
       .from("notifications")
       .select("*", { count: "exact", head: true })
       .eq("read", false);
 
-    // Filter het aantal ongelezen meldingen specifiek voor de actieve rol
-    if (role === "patient") {
+    if (currentRole === "patient") {
       query = query.eq("type", "privacy");
-    } else if (role === "mantelzorger") {
+    } else if (currentRole === "mantelzorger") {
       query = query.neq("type", "privacy");
     }
 
@@ -226,7 +235,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          // Dynamische titel en icoon op basis van de rol
           title: role === "mantelzorger" ? "OVERZICHT" : "VANDAAG",
           tabBarIcon: ({ color }) => (
             <Ionicons

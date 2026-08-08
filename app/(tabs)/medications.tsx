@@ -122,8 +122,14 @@ export default function MedicijnLijstScreen() {
     fetchSharedSettings();
 
     // 2. Abonneer op realtime wijzigingen voor settings
+    // NOTE: uses a unique name per mount (not a fixed string) so that if
+    // this screen gets frozen/reconnected by Expo Router when switching
+    // tabs, a new subscribe() call can never collide with an old channel
+    // of the same name that's still being torn down asynchronously. See
+    // app/(tabs)/_layout.tsx for the full explanation of this bug.
+    const settingsChannelName = `medicijnlijst-settings-${Math.random().toString(36).slice(2)}`;
     const settingsChannel = supabase
-      .channel("public:medicijnlijst_shared_settings")
+      .channel(settingsChannelName)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "shared_settings" },
@@ -143,8 +149,9 @@ export default function MedicijnLijstScreen() {
       .subscribe();
 
     // 3. NIEUW: Abonneer op realtime wijzigingen voor medicijnen (Supabase Sync)
+    const medsChannelName = `medications-sync-${Math.random().toString(36).slice(2)}`;
     const medsChannel = supabase
-      .channel("public:medications_sync")
+      .channel(medsChannelName)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "medications" },
@@ -470,7 +477,7 @@ export default function MedicijnLijstScreen() {
           sound: "default",
           title: "📦 Voorraad bijna op",
           body: `Mino meldt: ${medName} is bijna op en moet bijbesteld worden.`,
-          data: { type: "stock", medName: medName },
+          data: { type: "stock", medName: medName, route: "/medications" },
         };
 
         await fetch("https://exp.host/--/api/v2/push/send", {

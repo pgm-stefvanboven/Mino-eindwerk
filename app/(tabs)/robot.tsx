@@ -179,7 +179,7 @@ const DPad = ({
 export default function RobotScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { role } = useRole(); // Rol ophalen
+  const { role } = useRole();
 
   const [webKey, setWebKey] = React.useState(0);
   const [status, setStatus] = React.useState<
@@ -200,23 +200,25 @@ export default function RobotScreen() {
     setWebKey((k) => k + 1);
   };
 
-  // Functie voor ontgrendeling, wordt nu automatisch aangeroepen
+  // Functie voor ontgrendeling & privacy melding sturen
   const startCareSession = async () => {
-    setEmergencyAccess(true); // optimistic UI
+    setEmergencyAccess(true); // optimistic UI update
 
-    // Activeer de spraakmelding op de robot
+    // 1. Spraak/geluidsmelding op de fysieke robot triggeren
     fetch(`${VIDEO_IP}/camera_active_warning`, { method: "POST" }).catch(() =>
       console.log("Kan audio trigger niet bereiken"),
     );
 
+    // 2. Camera ontgrendelen in de gedeelde instellingen
     await supabase
       .from("shared_settings")
       .update({ emergency_camera_unlocked: true })
       .eq("id", 1);
 
+    // 3. Privacy notificatie versturen voor de patiënt (triggert de pop-up)
     await supabase.from("notifications").insert({
       title: "Camera actief",
-      body: "De mantelzorger kijkt tijdelijk mee via de camera.",
+      body: "De mantelzorger kijkt tijdelijk mee via de camera voor uw veiligheid.",
       type: "privacy",
     });
   };
@@ -230,7 +232,7 @@ export default function RobotScreen() {
 
       reloadVideo();
 
-      // 1. Controleer de huidige status en ontgrendel automatisch als het de mantelzorger is
+      // 1. Controleer de huidige status en ontgrendel automatisch bij een noodsituatie
       const loadStatus = async () => {
         const { data } = await supabase
           .from("shared_settings")
@@ -252,15 +254,16 @@ export default function RobotScreen() {
               Date.now() - 30 * 60000,
             ).toISOString();
 
+            // Zoek naar ongelezen noodmeldingen van de afgelopen 30 minuten
             const { count } = await supabase
               .from("notifications")
               .select("*", { count: "exact", head: true })
               .eq("type", "emergency")
-              .eq("read", false) // <-- Enkel ongelezen noodgevallen tellen mee
+              .eq("read", false)
               .gte("created_at", thirtyMinutesAgo);
 
             if (count && count > 0) {
-              startCareSession();
+              await startCareSession();
             }
           }
         }
@@ -268,7 +271,7 @@ export default function RobotScreen() {
 
       loadStatus();
 
-      // 2. Vergrendel-helper, herbruikt bij blur EN bij app-achtergrond.
+      // 2. Vergrendel-helper bij verlaten/achtergrond
       const lockEmergencyAccess = () => {
         if (role === "mantelzorger") {
           supabase
@@ -281,29 +284,29 @@ export default function RobotScreen() {
         }
       };
 
-      // 3. Vergrendel meteen zodra de app naar de achtergrond gaat / wordt
-      //    afgesloten — hier op wachten via de blur van useFocusEffect alleen
-      //    is niet betrouwbaar genoeg (dat vuurt niet af bij app-kill).
+      // 3. Luister naar AppState (app naar achtergrond)
       const appStateSub = AppState.addEventListener("change", (nextState) => {
         if (nextState !== "active") lockEmergencyAccess();
       });
 
-      // 4. Luister realtime naar updates (Cruciaal voor de patiënt-app)
-      const channel = supabase
-        .channel("public:shared_settings_robot")
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "shared_settings" },
-          (payload) => {
-            if (isActive) {
-              setCameraAlways(payload.new.camera_always_enabled);
-              setEmergencyAccess(payload.new.emergency_camera_unlocked);
-            }
-          },
-        )
-        .subscribe();
+      // 4. Realtime kanaal met UNIEKE naam om crash te voorkomen
+      const channelName = `public:shared_settings_robot_${Date.now()}`;
+      const channel = supabase.channel(channelName);
 
-      // DE CLEANUP FUNCTIE (Wordt uitgevoerd zodra je dit tabblad verlaat)
+      channel.on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "shared_settings" },
+        (payload) => {
+          if (isActive) {
+            setCameraAlways(payload.new.camera_always_enabled);
+            setEmergencyAccess(payload.new.emergency_camera_unlocked);
+          }
+        },
+      );
+
+      channel.subscribe();
+
+      // CLEANUP FUNCTIE bij verlaten van het scherm
       return () => {
         isActive = false;
 
@@ -359,21 +362,22 @@ export default function RobotScreen() {
     setTimeout(reloadVideo, 100);
   };
 
+  // Functie wanneer mantelzorger op "AFHANDELEN" tikt
   const handleEmergencyResolved = async () => {
-    // 1. Zet alle ongelezen noodmeldingen op gelezen
+    // 1. Zet alle ongelezen noodmeldingen pas NU op gelezen
     await supabase
       .from("notifications")
       .update({ read: true })
       .eq("type", "emergency")
       .eq("read", false);
 
-    // 2. Vergrendel de camera in Supabase
+    // 2. Vergrendel de camera weer in Supabase
     await supabase
       .from("shared_settings")
       .update({ emergency_camera_unlocked: false })
       .eq("id", 1);
 
-    // 3. Sluit de camera direct op het scherm
+    // 3. Sluit de camera op het scherm van de mantelzorger
     setEmergencyAccess(false);
   };
 
@@ -390,7 +394,6 @@ export default function RobotScreen() {
     </html>
   `;
 
-  // Heeft dit scherm momenteel recht om de stream te tonen?
   const hasAccess = cameraAlways || emergencyAccess;
 
   return (
