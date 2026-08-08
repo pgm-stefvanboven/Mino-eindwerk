@@ -423,12 +423,68 @@ export default function MedicijnLijstScreen() {
 
   const notifyCaregiver = async (medName: string) => {
     setIsSending(true);
+
+    // 1. Lokale robot waarschuwing (Bestaande code)
     try {
       await fetch(`${ROBOT_API}/notify_caregiver`, { method: "POST" });
     } catch (e) {
       console.log("Robot offline (demo mode)");
     }
 
+    try {
+      // 2. Haal de geregistreerde push token op uit de database
+      const { data: settings, error: settingsError } = await supabase
+        .from("shared_settings")
+        .select("caregiver_push_token")
+        .eq("id", 1)
+        .single();
+
+      if (settingsError) {
+        console.error("Fout bij ophalen token:", settingsError);
+      }
+
+      // 3. Sla op in notificaties tabel (voor de in-app weergave)
+      await supabase.from("notifications").insert({
+        title: "Voorraad bijna op",
+        body: `De medicatie ${medName} is bijna op en moet bijbesteld worden.`,
+        type: "stock",
+      });
+
+      // 4. HET BELANGRIJKSTE: Stuur de échte push melding via Expo
+      if (settings?.caregiver_push_token) {
+        console.log(
+          "📲 Push sturen naar mantelzorger:",
+          settings.caregiver_push_token,
+        );
+
+        const message = {
+          to: settings.caregiver_push_token,
+          sound: "default",
+          title: "📦 Voorraad bijna op",
+          body: `Mino meldt: ${medName} is bijna op en moet bijbesteld worden.`,
+          data: { type: "stock", medName: medName },
+        };
+
+        await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Accept-encoding": "gzip, deflate",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(message),
+        });
+        console.log("✅ Push API succesvol aangeroepen!");
+      } else {
+        console.log(
+          "⚠️ Geen push token gevonden in database voor de mantelzorger.",
+        );
+      }
+    } catch (error) {
+      console.error("❌ Kon melding niet volledig verwerken:", error);
+    }
+
+    // 5. Update de UI (Bestaande code)
     if (selectedMed) {
       const updatedList = meds.map((m) => {
         if (m.id === selectedMed.id) return { ...m, isOrdered: true };

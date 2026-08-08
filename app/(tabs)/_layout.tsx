@@ -2,9 +2,24 @@
 import { Tabs, useRouter, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, View, Text } from "react-native";
+import { Pressable, View, Text, Platform } from "react-native";
 import { useRole } from "../../context/RoleContext";
 import { supabase } from "../../lib/supabase";
+
+// --- NIEUW: PUSH IMPORTS ---
+import * as Device from "expo-device";
+import * as Notifications from "expo-notifications";
+
+// --- NIEUW: PUSH HANDLER ---
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 export default function TabLayout() {
   const router = useRouter();
@@ -12,6 +27,83 @@ export default function TabLayout() {
   const { role } = useRole();
 
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // --- NIEUW: REGISTREER GSM VOOR PUSH MELDINGEN ---
+  useEffect(() => {
+    async function registerForPushNotificationsAsync() {
+      console.log("🛠️ Push Check gestart. Huidige rol is:", role);
+
+      if (role !== "mantelzorger") {
+        console.log("🛑 Gestopt: Gebruiker is geen mantelzorger.");
+        return;
+      }
+
+      if (!Device.isDevice) {
+        console.log(
+          "🛑 Gestopt: Push notificaties vereisen een fysiek toestel.",
+        );
+        return;
+      }
+
+      try {
+        const { status: existingStatus } =
+          await Notifications.getPermissionsAsync();
+        console.log("📊 Huidige toestemming status:", existingStatus);
+        let finalStatus = existingStatus;
+
+        if (existingStatus !== "granted") {
+          console.log("👀 Toestemming vragen aan de gebruiker...");
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+
+        if (finalStatus !== "granted") {
+          console.log("🛑 Gestopt: Gebruiker heeft toestemming geweigerd!");
+          return;
+        }
+
+        console.log("✅ Toestemming is in orde! Token ophalen...");
+
+        // Haal de token op met JOUW échte project ID
+        const tokenData = await Notifications.getExpoPushTokenAsync({
+          projectId: "4137b61f-247e-4811-aea5-a53fc50ba7d7",
+        }).catch((err) => {
+          console.error("❌ Fout bij ophalen Expo token:", err);
+          return null;
+        });
+
+        if (!tokenData) return;
+
+        const token = tokenData.data;
+        console.log("🚀 Nieuwe Push Token gegenereerd:", token);
+
+        // Sla de token op in Supabase
+        const { error } = await supabase
+          .from("shared_settings")
+          .update({ caregiver_push_token: token })
+          .eq("id", 1);
+
+        if (error) {
+          console.error("❌ Fout bij opslaan push token in Supabase:", error);
+        } else {
+          console.log("💾 Token succesvol opgeslagen in Supabase!");
+        }
+
+        if (Platform.OS === "android") {
+          Notifications.setNotificationChannelAsync("default", {
+            name: "default",
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: "#00f0ff",
+          });
+        }
+      } catch (e) {
+        console.error("❌ Er is een onverwachte fout opgetreden:", e);
+      }
+    }
+
+    registerForPushNotificationsAsync();
+  }, [role]);
 
   // Update de badge elke keer als je van of naar dit scherm navigeert, of als de rol wijzigt
   useEffect(() => {
