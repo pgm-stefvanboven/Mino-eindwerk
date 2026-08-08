@@ -41,6 +41,7 @@ export default function SettingsScreen() {
   const [cameraAlwaysEnabled, setCameraAlwaysEnabled] = useState(false);
   const [contactLocked, setContactLocked] = useState(false);
   const [patientScanLocked, setPatientScanLocked] = useState(false);
+  const [patientDeleteLocked, setPatientDeleteLocked] = useState(false);
   const lastResetSignal = useRef<number | null>(null);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
@@ -74,6 +75,7 @@ export default function SettingsScreen() {
       if (data && !error) {
         setContactLocked(data.contact_locked);
         setPatientScanLocked(data.scan_locked);
+        setPatientDeleteLocked(data.delete_locked);
         setCameraAlwaysEnabled(data.camera_always_enabled);
 
         if (data.contact_name) setContactName(data.contact_name);
@@ -87,7 +89,7 @@ export default function SettingsScreen() {
         if (data.mino_volume !== null) setVolume(data.mino_volume);
         if (data.volume_locked !== null) setVolumeLocked(data.volume_locked);
 
-        // NIEUW: Sla het huidige reset-signaal op
+        // Sla het huidige reset-signaal op
         if (data.reset_signal !== null) {
           lastResetSignal.current = data.reset_signal;
         }
@@ -108,6 +110,9 @@ export default function SettingsScreen() {
             setContactLocked(updatedSettings.contact_locked);
           if (updatedSettings.scan_locked !== undefined)
             setPatientScanLocked(updatedSettings.scan_locked);
+          if (updatedSettings.delete_locked !== undefined) {
+            setPatientDeleteLocked(updatedSettings.delete_locked);
+          }
           if (updatedSettings.camera_always_enabled !== undefined)
             setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
           if (updatedSettings.contact_name !== undefined)
@@ -270,8 +275,33 @@ export default function SettingsScreen() {
       .eq("id", 1);
   };
 
+  const togglePatientDeleteLock = async (value: boolean) => {
+    setPatientDeleteLocked(value); // Optimistische UI update
+
+    const { error } = await supabase
+      .from("shared_settings")
+      .update({ delete_locked: value })
+      .eq("id", 1);
+
+    if (error) {
+      console.error(
+        "❌ Fout bij updaten delete_locked in Supabase:",
+        error.message,
+      );
+      // Draai de toggle lokaal terug als de opslag mislukt
+      setPatientDeleteLocked(!value);
+      showModal(
+        "Fout bij Opslaan",
+        "Kon de instelling niet opslaan in Supabase. Controleer of de kolom 'delete_locked' bestaat in de tabel 'shared_settings'.",
+        "error",
+      );
+    } else {
+      console.log("✅ delete_locked succesvol bijgewerkt naar:", value);
+    }
+  };
+
   const toggleCameraAlwaysEnabled = async (value: boolean) => {
-    setCameraAlwaysEnabled(value); // Optimistische UI update
+    setCameraAlwaysEnabled(value);
     await supabase
       .from("shared_settings")
       .update({ camera_always_enabled: value })
@@ -810,11 +840,11 @@ export default function SettingsScreen() {
               <View style={styles.switchRow}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.switchTitle}>
-                    Vergrendel zelfstandig scannen
+                    Vergrendel medicatiebeheer
                   </Text>
                   <Text style={styles.switchSub}>
-                    Patiënt kan geen nieuwe medicatie meer scannen (medicatie
-                    innemen is een aparte functie en blijft mogelijk).
+                    Voorkom dat de patiënt zelfstandig medicatie scant, bijvult
+                    of verwijdert.
                   </Text>
                 </View>
                 <Switch

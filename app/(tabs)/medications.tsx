@@ -121,12 +121,7 @@ export default function MedicijnLijstScreen() {
 
     fetchSharedSettings();
 
-    // 2. Abonneer op realtime wijzigingen voor settings
-    // NOTE: uses a unique name per mount (not a fixed string) so that if
-    // this screen gets frozen/reconnected by Expo Router when switching
-    // tabs, a new subscribe() call can never collide with an old channel
-    // of the same name that's still being torn down asynchronously. See
-    // app/(tabs)/_layout.tsx for the full explanation of this bug.
+    // 2. Abonneer op realtime wijzigingen voor settings met unieke kanaalnaam
     const settingsChannelName = `medicijnlijst-settings-${Math.random().toString(36).slice(2)}`;
     const settingsChannel = supabase
       .channel(settingsChannelName)
@@ -148,7 +143,7 @@ export default function MedicijnLijstScreen() {
       )
       .subscribe();
 
-    // 3. NIEUW: Abonneer op realtime wijzigingen voor medicijnen (Supabase Sync)
+    // 3. Abonneer op realtime wijzigingen voor medicijnen (Supabase Sync)
     const medsChannelName = `medications-sync-${Math.random().toString(36).slice(2)}`;
     const medsChannel = supabase
       .channel(medsChannelName)
@@ -156,7 +151,6 @@ export default function MedicijnLijstScreen() {
         "postgres_changes",
         { event: "*", schema: "public", table: "medications" },
         () => {
-          // Haal de lijst direct opnieuw op als er in de cloud iets verandert
           getMedications().then(setMeds);
         },
       )
@@ -169,9 +163,9 @@ export default function MedicijnLijstScreen() {
     };
   }, []);
 
-  // Bepaal of de scan-knoppen zichtbaar mogen zijn
-  // De mantelzorger mag altijd scannen. De patiënt alleen als het niet vergrendeld is.
-  const canScan = role === "mantelzorger" || !patientScanLocked;
+  // --- HULPCONTROLE VOOR ADAPTIEVE ZORG ---
+  // Als de patiënt actief is én de mantelzorger het beheer op slot heeft gezet, is beheer vergrendeld.
+  const isManagementLocked = role === "patient" && patientScanLocked;
 
   // --- CUSTOM ALERT HELPERS ---
   const showCustomSuccess = (title: string, msg: string) => {
@@ -439,7 +433,6 @@ export default function MedicijnLijstScreen() {
   const notifyCaregiver = async (medName: string) => {
     setIsSending(true);
 
-    // 1. Lokale robot waarschuwing (Bestaande code)
     try {
       await fetch(`${ROBOT_API}/notify_caregiver`, { method: "POST" });
     } catch (e) {
@@ -447,7 +440,6 @@ export default function MedicijnLijstScreen() {
     }
 
     try {
-      // 2. Haal de geregistreerde push token op uit de database
       const { data: settings, error: settingsError } = await supabase
         .from("shared_settings")
         .select("caregiver_push_token")
@@ -458,20 +450,13 @@ export default function MedicijnLijstScreen() {
         console.error("Fout bij ophalen token:", settingsError);
       }
 
-      // 3. Sla op in notificaties tabel (voor de in-app weergave)
       await supabase.from("notifications").insert({
         title: "Voorraad bijna op",
         body: `De medicatie ${medName} is bijna op en moet bijbesteld worden.`,
         type: "stock",
       });
 
-      // 4. HET BELANGRIJKSTE: Stuur de échte push melding via Expo
       if (settings?.caregiver_push_token) {
-        console.log(
-          "📲 Push sturen naar mantelzorger:",
-          settings.caregiver_push_token,
-        );
-
         const message = {
           to: settings.caregiver_push_token,
           sound: "default",
@@ -489,17 +474,11 @@ export default function MedicijnLijstScreen() {
           },
           body: JSON.stringify(message),
         });
-        console.log("✅ Push API succesvol aangeroepen!");
-      } else {
-        console.log(
-          "⚠️ Geen push token gevonden in database voor de mantelzorger.",
-        );
       }
     } catch (error) {
       console.error("❌ Kon melding niet volledig verwerken:", error);
     }
 
-    // 5. Update de UI (Bestaande code)
     if (selectedMed) {
       const updatedList = meds.map((m) => {
         if (m.id === selectedMed.id) return { ...m, isOrdered: true };
@@ -544,7 +523,6 @@ export default function MedicijnLijstScreen() {
           let textColor = "#666";
 
           if (isReported) {
-            // Rood/Winkelkar voor de mantelzorger, Blauw/Check voor de patiënt
             statusColor = role === "mantelzorger" ? "#ef4444" : "#60a5fa";
             statusIcon = role === "mantelzorger" ? "cart" : "mail-unread";
             statusText =
@@ -611,8 +589,8 @@ export default function MedicijnLijstScreen() {
         }}
       />
 
-      {/* VERBERG DE FAB ALS DE PATIËNT NIET MAG SCANNEN */}
-      {canScan && (
+      {/* VERBERG DE NIEUW-KNOP ALS MANAGEMENT VERGRENDELD IS */}
+      {!isManagementLocked && (
         <TouchableOpacity
           style={styles.fab}
           onPress={() => {
@@ -627,7 +605,7 @@ export default function MedicijnLijstScreen() {
         </TouchableOpacity>
       )}
 
-      {/* --- MODAL 1: ADD NEW MEDICINE --- */}
+      {/* --- MODAL 1: NIEUW MEDICIJN TOEVOEGEN --- */}
       <Modal
         animationType="slide"
         visible={addModalVisible}
@@ -763,6 +741,7 @@ export default function MedicijnLijstScreen() {
         </SafeAreaView>
       </Modal>
 
+      {/* --- CUSTOM MODALS --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -873,7 +852,7 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 3: CAMERA --- */}
+      {/* --- CAMERA MODAL --- */}
       <Modal
         animationType="slide"
         visible={cameraVisible}
@@ -908,7 +887,7 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 4: EDIT / REFILL --- */}
+      {/* --- MODAL 4: DETAILS / BIJVULLEN / BEHEER --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -939,8 +918,8 @@ export default function MedicijnLijstScreen() {
               </Text>
             )}
 
-            {/* VERBERG DE REFEL KNOP ALS DE PATIËNT NIET MAG SCANNEN */}
-            {canScan ? (
+            {/* 1. SCANNEN / BIJVULLEN OF VERGRENDELD BANNER */}
+            {!isManagementLocked ? (
               <TouchableOpacity
                 style={styles.bigScanBtn}
                 onPress={() => {
@@ -963,6 +942,7 @@ export default function MedicijnLijstScreen() {
               </View>
             )}
 
+            {/* 2. BESTEL / MELD KNOP (Voor lage voorraad) */}
             {selectedMed && selectedMed.stock < 10 && (
               <TouchableOpacity
                 disabled={isSending || selectedMed.isOrdered}
@@ -973,7 +953,6 @@ export default function MedicijnLijstScreen() {
                 ]}
                 onPress={() => {
                   if (role === "mantelzorger") {
-                    // DE TUSSENSTAP VOOR DE MANTELZORGER: "Ik heb het besteld"
                     const markAsOrdered = async () => {
                       setIsSending(true);
                       const updatedList = meds.map((m) =>
@@ -993,7 +972,6 @@ export default function MedicijnLijstScreen() {
                     };
                     markAsOrdered();
                   } else {
-                    // DE NORMALE FLOW VOOR DE PATIËNT: Push sturen
                     notifyCaregiver(selectedMed.name);
                   }
                 }}
@@ -1027,7 +1005,8 @@ export default function MedicijnLijstScreen() {
               </TouchableOpacity>
             )}
 
-            {role === "mantelzorger" && (
+            {/* 3. VERWIJDERKNOP (Enkel zichtbaar als beheer NIET vergrendeld is) */}
+            {!isManagementLocked && (
               <TouchableOpacity
                 onPress={() => {
                   if (selectedMed) {
@@ -1054,6 +1033,7 @@ export default function MedicijnLijstScreen() {
               </TouchableOpacity>
             )}
 
+            {/* SLUITEN KNOP */}
             <TouchableOpacity
               onPress={() => setEditModalVisible(false)}
               style={styles.closeBtn}
