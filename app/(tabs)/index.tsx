@@ -250,6 +250,18 @@ export default function VandaagScreen() {
     const currentMed = updatedMeds.find((m) => m.id === task.medId);
 
     if (currentMed && currentMed.stock < 10 && !currentMed.isOrdered) {
+      // 1. Bereken de resterende dagen
+      const timesPerDay =
+        tasks.filter((t) => t.medId === task.medId).length || 1;
+      const daysLeft = Math.floor(currentMed.stock / timesPerDay);
+
+      // 2. Trigger de robot om de vaste MP3 te spelen
+      try {
+        await fetch(`${ROBOT_API_URL}/inventory_warning`, {
+          method: "POST",
+        });
+      } catch {}
+
       try {
         await fetch(`${ROBOT_API_URL}/start_restock_timer`, {
           method: "POST",
@@ -391,6 +403,13 @@ export default function VandaagScreen() {
                     {lowStockMeds.map((med) => {
                       const isReported = med.isOrdered === true;
 
+                      // BEREKENING: Aantal dagen resterend
+                      // 1. Kijk hoe vaak dit medicijn vandaag in de lijst ('tasks') staat
+                      const timesPerDay =
+                        tasks.filter((t) => t.medId === med.id).length || 1;
+                      // 2. Deel de voorraad door het aantal innames per dag (naar beneden afgerond)
+                      const daysLeft = Math.floor(med.stock / timesPerDay);
+
                       return (
                         <View
                           key={med.id}
@@ -421,7 +440,7 @@ export default function VandaagScreen() {
                             </View>
                           ) : (
                             <Text style={styles.stockChipCount}>
-                              Nog {med.stock}
+                              Nog {med.stock} stuks (ca. {daysLeft} dgn)
                             </Text>
                           )}
                         </View>

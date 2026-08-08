@@ -44,6 +44,7 @@ RESTOCK_STATE = {
 }
 
 LAST_BATTERY_PERCENTAGE = 100
+BATTERY_WARNING_GIVEN = False
 
 # --- LED INITIALISATIE ---
 try:
@@ -147,19 +148,25 @@ def proxy_video_stream():
 
 # --- ACHTERGROND MONITOR ---
 def monitor_loop():
+    global BATTERY_WARNING_GIVEN, LAST_BATTERY_PERCENTAGE
     print("--- MONITOR ACTIEF: Wacht op triggers ---")
 
     while True:
         now = datetime.datetime.now()
+        
+        # 1. BATTERY WARNING
+        if LAST_BATTERY_PERCENTAGE <= 15 and not BATTERY_WARNING_GIVEN:
+            print("Batterij is laag, speel melding af.")
+            speak("Battery.mp3")
+            BATTERY_WARNING_GIVEN = True
+        elif LAST_BATTERY_PERCENTAGE > 20:
+            # Reset it once it's fully charged
+            BATTERY_WARNING_GIVEN = False
 
-        # HERINNERING BIJBESTELLEN
+        # 2. REMINDER: REORDER
         if RESTOCK_STATE["active"] and RESTOCK_STATE["deadline"]:
-
             if now > RESTOCK_STATE["deadline"]:
-
                 print("HERINNERING: Opa is vergeten te bestellen! Mino wordt Goud.")
-
-                # AUDIO HERINNERING
                 speak("Medication-reminder.mp3")
 
                 # LED EFFECT
@@ -402,12 +409,24 @@ def get_meds():
 
 @app.post("/lock_open")
 def lock_open():
-    send_cmd("CMD_LOCK#110")
+    # Check whether the command was successful
+    success = send_cmd("CMD_LOCK#110")
+    if not success:
+        print("Technisch probleem: motor reageert niet.")
+        speak("Technical-problem.mp3")
+        return jsonify({"status": "error"}), 500
+        
     return jsonify({"status": "open"})
 
 @app.post("/lock_close")
 def lock_close():
-    send_cmd("CMD_LOCK#20")
+    # Check whether the command was successful
+    success = send_cmd("CMD_LOCK#20")
+    if not success:
+        print("Technisch probleem: motor reageert niet.")
+        speak("Technical-problem.mp3")
+        return jsonify({"status": "error"}), 500
+
     return jsonify({"status": "closed"})
 # =========================================================
 # MEDICATIE BEVESTIGING
@@ -419,7 +438,11 @@ def confirm_med(id):
     print(f"Medicatie bevestigd: {id}")
 
     # SLOT DICHT
-    send_cmd("CMD_LOCK#20")
+    success = send_cmd("CMD_LOCK#20")
+    if not success:
+        print("Technisch probleem: motor reageert niet.")
+        speak("Technical-problem.mp3")
+        return jsonify({"status": "error"}), 500
 
     # AUDIO FEEDBACK
     speak("Medication-done.mp3")
@@ -498,6 +521,25 @@ def notify_caregiver():
         "message": "Robot interaction complete"
     })
 
+# =========================================================
+# CAMERA PRIVACY NOTIFICATION
+# =========================================================
+
+@app.post("/camera_active_warning")
+def camera_warning():
+    print("Camera actief waarschuwing afspelen.")
+    speak("Camera.mp3")
+    return jsonify({"status": "ok"})
+
+# =========================================================
+# INVENTORY NOTIFICATION
+# =========================================================
+
+@app.post("/inventory_warning")
+def inventory_warning():
+    print("Voorraad bijna op waarschuwing afspelen.")
+    speak("Inventory.mp3")
+    return jsonify({"status": "ok"})
 
 # =========================================================
 # MAIN

@@ -204,6 +204,11 @@ export default function RobotScreen() {
   const startCareSession = async () => {
     setEmergencyAccess(true); // optimistic UI
 
+    // Activeer de spraakmelding op de robot
+    fetch(`${VIDEO_IP}/camera_active_warning`, { method: "POST" }).catch(() =>
+      console.log("Kan audio trigger niet bereiken"),
+    );
+
     await supabase
       .from("shared_settings")
       .update({ emergency_camera_unlocked: true })
