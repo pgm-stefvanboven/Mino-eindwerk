@@ -161,42 +161,44 @@ export default function VandaagScreen() {
   }, [role]);
 
   useEffect(() => {
-    // Alleen uitvoeren op het Vandaag-scherm
+    // 1. VOORKOM AFSPELEN BIJ MANTELZORGER:
+    // Alleen de robot in de kamer van de patiënt moet dit afspelen!
+    if (role === "mantelzorger") return;
+
+    // 2. Alleen uitvoeren als de geselecteerde datum VANDAAG is
     if (!isToday(selectedDate)) return;
 
-    // Geen voorraadwaarschuwing nodig
+    // 3. Controleer of er medicatie is die écht waarschuwing behoeft (stock < 10 én nog niet gemeld)
     const needsWarning = lowStockMeds.some(
       (med) => med.stock < 10 && !med.isOrdered,
     );
 
     if (!needsWarning) return;
 
-    // Voorkom dat het geluid iedere render/focus opnieuw afspeelt
-    if (inventoryWarningPlayed.current) return;
+    const triggerWarningOncePerDay = async () => {
+      const todayKey = `inventory_warning_played_${new Date().toDateString()}`;
+      const hasPlayedToday = await AsyncStorage.getItem(todayKey);
 
-    inventoryWarningPlayed.current = true;
+      // Als de waarschuwing vandaag al is afgespeeld, doen we NIETS
+      if (hasPlayedToday) return;
 
-    console.log("Voorraad bijna op - Inventory.mp3 afspelen");
+      console.log(
+        "🔊 Voorraad bijna op - Eenmalige inventory warning afspelen voor vandaag...",
+      );
 
-    fetch(`${ROBOT_API_URL}/inventory_warning`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Inventory warning HTTP ${response.status}`);
-        }
+      // Markeer direct als afgespeeld voor vandaag om dubbele triggers te voorkomen
+      await AsyncStorage.setItem(todayKey, "true");
 
-        const data = await response.json();
-        console.log("Inventory warning response:", data);
-      })
-      .catch((error) => {
+      fetch(`${ROBOT_API_URL}/inventory_warning`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }).catch((error) => {
         console.error("Inventory warning kon niet worden afgespeeld:", error);
-        inventoryWarningPlayed.current = false;
       });
-  }, [lowStockMeds, selectedDate]);
+    };
+
+    triggerWarningOncePerDay();
+  }, [lowStockMeds, selectedDate, role]);
 
   const isTooFarBack = () => {
     const t = new Date();
