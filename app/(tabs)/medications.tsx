@@ -46,16 +46,14 @@ const MAX_STOCK_PER_MED = 500;
 const SCAN_COOLDOWN = 2000;
 const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 
-// GECORRIGEERDE GIBBERISH DETECTIE (Houdt rekening met mg, g, mcg, ml, etc.)
+// GECORRIGEERDE GIBBERISH DETECTIE
 const isGibberish = (text: string) => {
   const cleanText = text.trim().toLowerCase();
 
-  // Als de tekst een geldige doseringseenheid bevat (bijv. 500mg, 1g, 10mcg, 5ml), negeer gibberish-check
   if (/\d+\s*(mg|mcg|g|ml|cl|l|puf|puffs|stuks|pills|iu)\b/i.test(cleanText)) {
     return false;
   }
 
-  // Controleer enkel op echte onzin (bijv. 5 opeenvolgende medeklinkers of 4 dezelfde karakters)
   if (/[bcdfghjklmnpqrstvwxz]{6,}/i.test(cleanText)) return true;
   if (/(.)\1{3,}/.test(cleanText)) return true;
 
@@ -180,7 +178,6 @@ export default function MedicijnLijstScreen() {
   }, []);
 
   // --- HULPCONTROLE VOOR ADAPTIEVE ZORG ---
-  // Als de patiënt actief is én de mantelzorger het beheer op slot heeft gezet, is beheer vergrendeld.
   const isManagementLocked = role === "patient" && patientScanLocked;
 
   // --- CUSTOM ALERT HELPERS ---
@@ -205,6 +202,13 @@ export default function MedicijnLijstScreen() {
     setConfirmVisible(true);
   };
 
+  const clearAddForm = () => {
+    setNewName("");
+    setNewDosage("");
+    setNewStock("");
+    setIsLocked(false);
+  };
+
   // --- CAMERA LOGIC ---
   const startCamera = async (refillMode = false) => {
     if (!permission?.granted) {
@@ -225,6 +229,7 @@ export default function MedicijnLijstScreen() {
     const foundProduct = BARCODE_DB[data];
 
     if (foundProduct) {
+      // 1. BIJVUL-MODUS (via medicijn-card)
       if (isRefilling && selectedMed) {
         if (
           foundProduct.name.toLowerCase() !== selectedMed.name.toLowerCase()
@@ -246,14 +251,6 @@ export default function MedicijnLijstScreen() {
                 MAX_STOCK_PER_MED,
                 m.stock + foundProduct.stockToAdd,
               );
-              if (updatedStock === MAX_STOCK_PER_MED) {
-                setTimeout(() => {
-                  showCustomWarning(
-                    "Voorraad limiet",
-                    "Maximum voorraad voor dit medicijn bereikt.",
-                  );
-                }, 1000);
-              }
               updatedItem = {
                 ...m,
                 stock: updatedStock,
@@ -279,21 +276,31 @@ export default function MedicijnLijstScreen() {
           now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
         ) {
           setTimeout(() => {
-            showCustomConfirm(
-              "Medicijn vandaag al gescand",
-              "Dit medicijn werd vandaag al toegevoegd. Heb je echt een tweede doos gescand?",
-              () => {
-                setConfirmVisible(false);
-                updateStockLogic();
-              },
-              "TOEVOEGEN",
-              false,
+            showCustomWarning(
+              "Al bijgevuld",
+              "Dit medicijn is vandaag al een keer bijgevuld.",
             );
           }, 500);
           return;
         }
         updateStockLogic();
       } else {
+        // 2. ALGEMENE NIEUWE SCAN (via onderste knop)
+        const alreadyExists = meds.some(
+          (m) => m.name.toLowerCase() === foundProduct.name.toLowerCase(),
+        );
+
+        if (alreadyExists) {
+          setTimeout(() => {
+            showCustomWarning(
+              "Medicijn bestaat al",
+              `${foundProduct.name} staat al in je lijst. Tik op het medicijn in het overzicht om het bij te vullen.`,
+            );
+          }, 500);
+          clearAddForm();
+          return;
+        }
+
         setNewName(foundProduct.name);
         setNewDosage(foundProduct.dosage);
         setNewStock(foundProduct.stockToAdd.toString());
@@ -372,65 +379,39 @@ export default function MedicijnLijstScreen() {
     const now = Date.now();
 
     const existingMed = meds.find(
-      (m) =>
-        m.name.toLowerCase() === trimmedName.toLowerCase() &&
-        m.dosage.toLowerCase() === trimmedDosage.toLowerCase(),
+      (m) => m.name.toLowerCase() === trimmedName.toLowerCase(),
     );
 
-    let updatedList: Medication[];
-
     if (existingMed) {
-      if (
-        existingMed.lastScannedAt &&
-        now - existingMed.lastScannedAt < DEMENTIA_TIME_LOCK
-      ) {
-        showCustomWarning(
-          "Al toegevoegd!",
-          "Je hebt dit medicijn vandaag al bijgevuld in de app.",
-        );
-        return;
-      }
-
-      const newStockValue = Math.min(
-        MAX_STOCK_PER_MED,
-        existingMed.stock + stockAmount,
+      setAddModalVisible(false);
+      clearAddForm();
+      showCustomWarning(
+        "Medicijn bestaat al",
+        `${existingMed.name} staat al in je lijst. Tik op het medicijn om de voorraad bij te vullen.`,
       );
-
-      updatedList = meds.map((m) =>
-        m.id === existingMed.id
-          ? { ...m, stock: newStockValue, lastScannedAt: now }
-          : m,
-      );
-
-      showCustomSuccess(
-        "Voorraad bijgewerkt",
-        `${existingMed.name} voorraad verhoogd.`,
-      );
-    } else {
-      const newMedItem: Medication = {
-        id: Date.now().toString(),
-        name: trimmedName,
-        dosage: trimmedDosage || "N.v.t.",
-        stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
-        isOrdered: false,
-        lastScannedAt: now,
-      };
-
-      updatedList = [...meds, newMedItem];
-      showCustomSuccess(
-        "Medicijn toegevoegd",
-        `${trimmedName} toegevoegd aan voorraad.`,
-      );
+      return;
     }
 
+    const newMedItem: Medication = {
+      id: Date.now().toString(),
+      name: trimmedName,
+      dosage: trimmedDosage || "N.v.t.",
+      stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
+      isOrdered: false,
+      lastScannedAt: now,
+    };
+
+    const updatedList = [...meds, newMedItem];
     setMeds(updatedList);
     await saveMedications(updatedList);
 
+    showCustomSuccess(
+      "Medicijn toegevoegd",
+      `${trimmedName} toegevoegd aan voorraad.`,
+    );
+
     setAddModalVisible(false);
-    setNewName("");
-    setNewDosage("");
-    setNewStock("");
-    setIsLocked(false);
+    clearAddForm();
   };
 
   // --- SAVING EDITED MEDICINE ---
@@ -599,6 +580,9 @@ export default function MedicijnLijstScreen() {
     }, 1500);
   };
 
+  // Hulpcontrole: Is de voorraad nog ruim voldoende?
+  const isStockSufficient = selectedMed && selectedMed.stock >= 10;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -694,10 +678,7 @@ export default function MedicijnLijstScreen() {
         <TouchableOpacity
           style={styles.fab}
           onPress={() => {
-            setNewName("");
-            setNewDosage("");
-            setNewStock("");
-            setIsLocked(false);
+            clearAddForm();
             setAddModalVisible(true);
           }}
         >
@@ -709,7 +690,10 @@ export default function MedicijnLijstScreen() {
       <Modal
         animationType="slide"
         visible={addModalVisible}
-        onRequestClose={() => setAddModalVisible(false)}
+        onRequestClose={() => {
+          clearAddForm();
+          setAddModalVisible(false);
+        }}
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: "#09090b" }}>
           <KeyboardAvoidingView
@@ -725,7 +709,12 @@ export default function MedicijnLijstScreen() {
               <View style={styles.modalContentFullScreen}>
                 <View style={styles.modalHeader}>
                   <Text style={styles.modalTitle}>Nieuw Medicijn</Text>
-                  <TouchableOpacity onPress={() => setAddModalVisible(false)}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      clearAddForm();
+                      setAddModalVisible(false);
+                    }}
+                  >
                     <Ionicons name="close" size={28} color="#888" />
                   </TouchableOpacity>
                 </View>
@@ -1018,7 +1007,6 @@ export default function MedicijnLijstScreen() {
                 </View>
 
                 <View style={styles.headerIconRow}>
-                  {/* Bewerken icoon (enkel als beheer niet op slot zit) */}
                   {!isManagementLocked && !isEditingMed && (
                     <TouchableOpacity
                       onPress={() => setIsEditingMed(true)}
@@ -1063,29 +1051,42 @@ export default function MedicijnLijstScreen() {
                     )}
                   </View>
 
-                  {/* PRIMAIRE ACTIE: SCAN BIJVULLEN */}
+                  {/* PRIMAIRE ACTIE: SCAN BIJVULLEN (Enkel zichtbaar wanneer voorraad bijna op is) */}
                   {!isManagementLocked ? (
-                    <TouchableOpacity
-                      style={styles.bigScanBtn}
-                      onPress={() => {
-                        setEditModalVisible(false);
-                        setTimeout(() => startCamera(true), 500);
-                      }}
-                    >
-                      <Ionicons
-                        name="scan-circle-outline"
-                        size={32}
-                        color="white"
-                      />
-                      <View style={{ marginLeft: 12 }}>
-                        <Text style={styles.bigScanTitle}>
-                          SCAN NIEUWE DOOS
-                        </Text>
-                        <Text style={styles.bigScanSub}>
-                          Voorraad automatisch verhogen
+                    !isStockSufficient ? (
+                      <TouchableOpacity
+                        style={styles.bigScanBtn}
+                        onPress={() => {
+                          setEditModalVisible(false);
+                          setTimeout(() => startCamera(true), 500);
+                        }}
+                      >
+                        <Ionicons
+                          name="scan-circle-outline"
+                          size={32}
+                          color="white"
+                        />
+                        <View style={{ marginLeft: 12 }}>
+                          <Text style={styles.bigScanTitle}>
+                            SCAN NIEUWE DOOS
+                          </Text>
+                          <Text style={styles.bigScanSub}>
+                            Voorraad automatisch verhogen
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.sufficientStockBanner}>
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={18}
+                          color="#4ade80"
+                        />
+                        <Text style={styles.sufficientStockText}>
+                          Voorraad is voldoende op peil
                         </Text>
                       </View>
-                    </TouchableOpacity>
+                    )
                   ) : (
                     <View style={styles.lockedRefillBanner}>
                       <Ionicons
@@ -1170,7 +1171,7 @@ export default function MedicijnLijstScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* SUBTIELE VERWIJDEROPTIE (Discreet onderin) */}
+                  {/* SUBTIELE VERWIJDEROPTIE */}
                   {!isManagementLocked && (
                     <TouchableOpacity
                       onPress={() => {
@@ -1434,6 +1435,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 1,
   },
+  sufficientStockBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(74, 222, 128, 0.1)",
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(74, 222, 128, 0.25)",
+    width: "100%",
+    justifyContent: "center",
+    marginTop: 10,
+  },
+  sufficientStockText: {
+    color: "#4ade80",
+    fontSize: 13,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
   notifyBtnSubtle: {
     flexDirection: "row",
     alignItems: "center",
@@ -1483,7 +1502,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 25,
   },
-
   lockedRefillBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -1501,7 +1519,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginLeft: 8,
   },
-
   successContent: {
     backgroundColor: "#1c1c1e",
     width: "80%",

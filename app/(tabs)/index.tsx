@@ -1,30 +1,42 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  StyleSheet,
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StatusBar,
-  Modal,
-  ActivityIndicator,
-} from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import { Pi } from "../../services/pi";
+import * as Notifications from "expo-notifications";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Modal,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useRole } from "../../context/RoleContext";
 import {
   DAILY_SCHEDULE,
   decreaseStock,
   getMedications,
   Medication,
 } from "../../data/medications";
-import { useRole } from "../../context/RoleContext";
 import { supabase } from "../../lib/supabase";
+import { Pi } from "../../services/pi";
+
+// Stel de notificatie-handler in voor lokale meldingen
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 type Task = {
   id: number;
@@ -36,7 +48,6 @@ type Task = {
 };
 
 const DEMO_MISS_LIMIT_SECONDS = 5;
-// Zorg dat dit IP klopt met je server
 const ROBOT_API_URL = "http://10.178.148.75:5001";
 
 // --- DATE LOGIC ---
@@ -63,7 +74,6 @@ export default function VandaagScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lowStockMeds, setLowStockMeds] = useState<Medication[]>([]);
-  const inventoryWarningPlayed = useRef(false);
   const [takingMedication, setTakingMedication] = useState<number | null>(null);
   const [emergencyActive, setEmergencyActive] = useState(false);
   const [alarmStage, setAlarmStage] = useState<
@@ -76,31 +86,25 @@ export default function VandaagScreen() {
     phone: "",
   });
 
-  // Update clock every second
+  // Reset het rode bolletje (badge '1') zodra de patiënt het scherm bekijkt
+  useEffect(() => {
+    if (role === "patient") {
+      Notifications.setBadgeCountAsync(0).catch(() => {});
+    }
+  }, [role]);
+
+  // Update klok elke seconde
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Arrived here via a "privacy" notification tap (see
-  // lib/notificationRouting.ts, which routes privacy notifications to
-  // "/?privacyAlert=1"). Show the reassuring dialog, then clear the param
-  // so navigating away and back (or a re-render) doesn't reopen it.
-  // (Kept as a fallback path — the realtime effect below is the primary
-  // trigger now, since no push is actually sent for "privacy" type.)
   useEffect(() => {
     if (!params.privacyAlert) return;
     setPrivacyModalVisible(true);
     router.setParams({ privacyAlert: undefined } as any);
   }, [params.privacyAlert]);
 
-  // Show the privacy dialog automatically the instant a caregiver's
-  // camera access is unlocked (see app/(tabs)/robot.tsx's
-  // startCareSession / handleEmergencyResolved / lockEmergencyAccess),
-  // and hide it automatically the instant access ends — no notification
-  // tap required, and it doubles as the "closes automatically as soon as
-  // the camera stops" behavior. Only relevant to the patient; the
-  // caregiver who's actually watching doesn't need to be told about it.
   useEffect(() => {
     if (role !== "patient") return;
 
@@ -161,14 +165,9 @@ export default function VandaagScreen() {
   }, [role]);
 
   useEffect(() => {
-    // 1. VOORKOM AFSPELEN BIJ MANTELZORGER:
-    // Alleen de robot in de kamer van de patiënt moet dit afspelen!
     if (role === "mantelzorger") return;
-
-    // 2. Alleen uitvoeren als de geselecteerde datum VANDAAG is
     if (!isToday(selectedDate)) return;
 
-    // 3. Controleer of er medicatie is die écht waarschuwing behoeft (stock < 10 én nog niet gemeld)
     const needsWarning = lowStockMeds.some(
       (med) => med.stock < 10 && !med.isOrdered,
     );
@@ -179,14 +178,8 @@ export default function VandaagScreen() {
       const todayKey = `inventory_warning_played_${new Date().toDateString()}`;
       const hasPlayedToday = await AsyncStorage.getItem(todayKey);
 
-      // Als de waarschuwing vandaag al is afgespeeld, doen we NIETS
       if (hasPlayedToday) return;
 
-      console.log(
-        "🔊 Voorraad bijna op - Eenmalige inventory warning afspelen voor vandaag...",
-      );
-
-      // Markeer direct als afgespeeld voor vandaag om dubbele triggers te voorkomen
       await AsyncStorage.setItem(todayKey, "true");
 
       fetch(`${ROBOT_API_URL}/inventory_warning`, {
@@ -215,11 +208,10 @@ export default function VandaagScreen() {
     return selectedDate >= l;
   };
 
-  // --- DATA LOADING ---
+  // --- DATA LOADING & SYNCHRONISATIE ---
   const loadData = useCallback(async () => {
     setIsLoading(true);
 
-    // Haal de actuele contactgegevens op uit Supabase
     const { data: contactData, error: contactError } = await supabase
       .from("shared_settings")
       .select("contact_name, contact_relation, contact_phone")
@@ -234,21 +226,24 @@ export default function VandaagScreen() {
       });
     }
 
-    // 1. Check Stock (for the warning at the top)
     const currentMeds = await getMedications();
     setLowStockMeds(currentMeds.filter((m) => m.stock < 10));
 
-    // 2. Build Task List
     const dateKey = `tasks_${selectedDate.toDateString()}`;
     const savedData = await AsyncStorage.getItem(dateKey);
 
-    // Build base structure from config (so names/times are always up-to-date)
     let currentTasks = DAILY_SCHEDULE.map((scheduleItem) => {
       const med = currentMeds.find((m) => m.id === scheduleItem.medId);
+
+      let medName = med ? med.name : "Onbekend";
+      if (!med && scheduleItem.medId === "6") {
+        medName = "Dafalgan Forte";
+      }
+
       return {
         id: scheduleItem.id,
         time: scheduleItem.time,
-        name: `${scheduleItem.amount} ${med ? med.name : "Onbekend"}`,
+        name: `${scheduleItem.amount} ${medName}`,
         medId: scheduleItem.medId,
         amount: scheduleItem.amount,
         taken: false,
@@ -256,35 +251,77 @@ export default function VandaagScreen() {
     });
 
     if (savedData) {
-      // Restore checkmarks from storage
       const savedTasks: Task[] = JSON.parse(savedData);
       currentTasks = currentTasks.map((t) => {
+        // DEMO MEDICIN (106) NOOIT OP 'TAKEN' ZETTEN BIJ HET LADEN
+        if (t.id === 106) return { ...t, taken: false };
+
         const saved = savedTasks.find((st) => st.id === t.id);
         return saved ? { ...t, taken: saved.taken } : t;
       });
     } else if (isPastDate(selectedDate)) {
-      // Simulate history
       currentTasks = currentTasks.map((t) => ({
         ...t,
-        taken: Math.random() > 0.2,
+        taken: t.id === 106 ? false : Math.random() > 0.2,
       }));
       await AsyncStorage.setItem(dateKey, JSON.stringify(currentTasks));
+    }
+
+    // SYNCHRONISATIE MET SUPABASE MEDICATION_LOGS (Demo overslaan)
+    try {
+      const dateStr = selectedDate.toISOString().split("T")[0];
+      const { data: dbLogs, error: logErr } = await supabase
+        .from("medication_logs")
+        .select("*")
+        .eq("date", dateStr);
+
+      if (dbLogs && dbLogs.length > 0 && !logErr) {
+        currentTasks = currentTasks.map((t) => {
+          if (t.id === 106) return { ...t, taken: false }; // DEMO
+          const log = dbLogs.find((l: any) => l.task_id === t.id);
+          return log ? { ...t, taken: log.taken } : t;
+        });
+      }
+    } catch (e) {
+      console.log("Fout bij ophalen logs uit Supabase:", e);
     }
 
     setTasks(currentTasks);
     setIsLoading(false);
   }, [selectedDate]);
 
-  // Reload when screen comes into view or date changes
+  // REALTIME SUBSCRIPTION OP TABEL MEDICATION_LOGS
+  useEffect(() => {
+    const channelName = `tasks-realtime-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "medication_logs" },
+        () => {
+          loadData();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
+
   useFocusEffect(
     useCallback(() => {
       loadData();
     }, [loadData]),
   );
 
-  // --- STATUS LOGIC ---
+  // --- STATUS LOGIC MET DEMO AFHANDELING ---
   const getTaskStatus = (task: Task) => {
     if (task.taken) return "TAKEN";
+
+    // DEMO IS ALTIJD DIRECT BESCHIKBAAR
+    if (task.time === "DEMO") return "ACTIONABLE";
+
     if (isPastDate(selectedDate)) return "MISSED_HISTORIC";
     if (!isToday(selectedDate) && !isPastDate(selectedDate))
       return "FUTURE_DAY";
@@ -292,13 +329,52 @@ export default function VandaagScreen() {
     const [hours, minutes] = task.time.split(":").map(Number);
     const taskTime = new Date();
     taskTime.setHours(hours, minutes, 0, 0);
-    const missLimit = new Date(taskTime);
-    missLimit.setSeconds(missLimit.getSeconds() + DEMO_MISS_LIMIT_SECONDS);
 
-    if (now < taskTime) return "WAITING";
+    const fiveMinBefore = new Date(taskTime.getTime() - 5 * 60 * 1000);
+    const missLimit = new Date(
+      taskTime.getTime() + DEMO_MISS_LIMIT_SECONDS * 1000,
+    );
+
+    if (now >= fiveMinBefore && now < taskTime) return "UPCOMING";
+    if (now >= taskTime && now <= missLimit) return "ACTIONABLE";
     if (now > missLimit) return "MISSED_TODAY";
-    return "ACTIONABLE";
+    return "WAITING";
   };
+
+  // --- AUTOMATISCHE LOKALE MELDING + BADGE 5 MINUTEN VOOR TIJD NAAR PATIËNT ---
+  useEffect(() => {
+    if (role !== "patient" || !isToday(selectedDate)) return;
+
+    tasks.forEach((task) => {
+      if (task.taken) return;
+      const status = getTaskStatus(task);
+
+      if (status === "UPCOMING") {
+        const notifyKey = `notified_5min_${selectedDate.toDateString()}_${task.id}`;
+        AsyncStorage.getItem(notifyKey).then(async (alreadyNotified) => {
+          if (!alreadyNotified) {
+            await AsyncStorage.setItem(notifyKey, "true");
+
+            await supabase.from("notifications").insert({
+              title: "⏰ Bijna tijd voor medicatie",
+              body: `Het is over 5 minuten tijd om ${task.name} in te nemen.`,
+              type: "reminder_5min",
+            });
+
+            await Notifications.scheduleNotificationAsync({
+              content: {
+                title: "⏰ Bijna tijd voor medicatie!",
+                body: `Het is over 5 minuten tijd om ${task.name} in te nemen.`,
+                sound: "default",
+                badge: 1,
+              },
+              trigger: null,
+            });
+          }
+        });
+      }
+    });
+  }, [now, tasks, selectedDate, role]);
 
   const changeDate = (days: number) => {
     const newDate = new Date(selectedDate);
@@ -319,8 +395,10 @@ export default function VandaagScreen() {
     setSelectedDate(newDate);
   };
 
-  // --- DE BELANGRIJKSTE UPDATE: INNAME BEVESTIGEN + TIMER STARTEN ---
+  // 1e TIK: SLOT OPENEN & KNOP "GENOMEN" MAKEN
   const confirmMedication = async (id: number) => {
+    if (role === "mantelzorger") return;
+
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
     if (getTaskStatus(task) !== "ACTIONABLE") return;
@@ -348,59 +426,65 @@ export default function VandaagScreen() {
     }, 5000);
   };
 
+  // 2e TIK: INNAME AFRONDEN
   const finishMedication = async (id: number) => {
+    if (role === "mantelzorger") return;
+
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
 
-    try {
-      await fetch(`${ROBOT_API_URL}/lock_close`, {
-        method: "POST",
-      });
-    } catch {}
+    // 1. Herinnering stopzetten op de Pi EERST
+    await Pi.stopReminder().catch(() => {});
 
+    // 2. Speel het bevestigingsgeluid op de Pi en sluit het slot
+    await Pi.confirmMed(id).catch(console.error);
+
+    // Zet de knop op 'taken = true' (toont direct 'OK')
+    setTasks((prevTasks) =>
+      prevTasks.map((t) => (t.id === id ? { ...t, taken: true } : t)),
+    );
+
+    // --- GEARRANGEERD VOOR DEMO KNOP (106 / "DEMO") ---
+    if (task.time === "DEMO" || task.id === 106) {
+      setTakingMedication(null);
+
+      // Reset na exact 5 seconden de DEMO knop weer naar 'NEEM IN'
+      setTimeout(() => {
+        setTasks((prevTasks) =>
+          prevTasks.map((t) => (t.id === id ? { ...t, taken: false } : t)),
+        );
+      }, 5000);
+
+      return; // Stop hier: sla DEMO niet op in DB/AsyncStorage en verminder geen voorraad
+    }
+
+    // REGULIERE MEDICATIE OPSLAAN
     const newTasks = tasks.map((t) =>
       t.id === id ? { ...t, taken: true } : t,
     );
 
-    setTasks(newTasks);
-
     const dateKey = `tasks_${selectedDate.toDateString()}`;
     await AsyncStorage.setItem(dateKey, JSON.stringify(newTasks));
+
+    const dateStr = selectedDate.toISOString().split("T")[0];
+    try {
+      await supabase.from("medication_logs").upsert(
+        {
+          task_id: id,
+          date: dateStr,
+          taken: true,
+          taken_at: new Date().toISOString(),
+        },
+        { onConflict: "task_id, date" },
+      );
+    } catch (e) {
+      console.error("Fout bij opslaan medicatie-log in Supabase:", e);
+    }
 
     await decreaseStock(task.medId, task.amount);
 
     const updatedMeds = await getMedications();
     setLowStockMeds(updatedMeds.filter((m) => m.stock < 10));
-
-    // 1. AWAIT pauzeert de code hier perfect totdat de robot klaar is met de eerste audio ("Medication-done.mp3")
-    await Pi.confirmMed(id).catch(console.error);
-    Pi.stopReminder().catch(() => {});
-
-    const currentMed = updatedMeds.find((m) => m.id === task.medId);
-
-    // Controleer of de voorraad kritiek is
-    if (currentMed && currentMed.stock < 10 && !currentMed.isOrdered) {
-      // Omdat we hebben gewacht op het inname-geluidje, is de speaker nu vrij!
-      try {
-        console.log("Trigger inventory warning...");
-        await fetch(`${ROBOT_API_URL}/inventory_warning`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch (err) {
-        console.error("Fout bij afspelen inventory_warning:", err);
-      }
-
-      try {
-        console.log("Start restock timer...");
-        await fetch(`${ROBOT_API_URL}/start_restock_timer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch (err) {
-        console.error("Fout bij starten restock timer:", err);
-      }
-    }
 
     await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
     setEmergencyActive(false);
@@ -413,7 +497,6 @@ export default function VandaagScreen() {
     setShowDemoModal(true);
     setAlarmStage("reminder");
 
-    // FASE 1
     await fetch("http://10.178.148.75:5001/start_reminder", {
       method: "POST",
     });
@@ -421,7 +504,6 @@ export default function VandaagScreen() {
     setTimeout(async () => {
       setAlarmStage("waiting");
 
-      // FASE 2
       await fetch("http://10.178.148.75:5001/second_reminder", {
         method: "POST",
       });
@@ -433,7 +515,6 @@ export default function VandaagScreen() {
 
       await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
 
-      // FASE 3
       await fetch("http://10.178.148.75:5001/care_emergency", {
         method: "POST",
       });
@@ -495,8 +576,7 @@ export default function VandaagScreen() {
         />
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
-          {/*  STOCK ALERT (Slimme Versie) */}
-          {/*  STOCK ALERT (Slimme Jury-proof Versie) */}
+          {/* STOCK ALERT */}
           {lowStockMeds.length > 0 &&
             (() => {
               const unhandledCount = lowStockMeds.filter(
@@ -504,11 +584,8 @@ export default function VandaagScreen() {
               ).length;
               const isAllHandled = unhandledCount === 0;
 
-              // Bepaal de logica per rol
               const isMantelzorger = role === "mantelzorger";
 
-              // Voor de patiënt is 'isAllHandled' goed nieuws (blauw).
-              // Voor de mantelzorger is 'isAllHandled' (gemeld door patiënt) een actiepunt (rood).
               let themeColor = "";
               let headerText = "";
               let iconName = "";
@@ -556,18 +633,17 @@ export default function VandaagScreen() {
                         tasks.filter((t) => t.medId === med.id).length || 1;
                       const daysLeft = Math.floor(med.stock / timesPerDay);
 
-                      // Kleur van de individuele pillen-chip
                       const chipBorderColor = isReported
                         ? isMantelzorger
-                          ? "rgba(239, 68, 68, 0.4)" // Rood voor mantelzorger
-                          : "rgba(96, 165, 250, 0.4)" // Blauw voor patiënt
-                        : "rgba(255, 170, 0, 0.4)"; // Oranje als standaard waarschuwing
+                          ? "rgba(239, 68, 68, 0.4)"
+                          : "rgba(96, 165, 250, 0.4)"
+                        : "rgba(255, 170, 0, 0.4)";
 
                       return (
                         <TouchableOpacity
                           key={med.id}
-                          activeOpacity={0.7} // Zorgt voor de visuele klik-feedback
-                          onPress={() => router.push("/medications")} // De snelkoppeling!
+                          activeOpacity={0.7}
+                          onPress={() => router.push("/medications")}
                           style={{
                             backgroundColor: "rgba(0,0,0,0.3)",
                             paddingHorizontal: 16,
@@ -771,11 +847,28 @@ export default function VandaagScreen() {
                     iconName = "checkmark";
                     isDisabled = true;
                     break;
+                  case "UPCOMING":
+                    btnStyle = styles.btnUpcoming;
+                    btnText = "OVER 5 MIN";
+                    iconName = "alert-circle-outline";
+                    iconColor = "#ffaa00";
+                    textColor = "#ffaa00";
+                    isDisabled = true;
+                    break;
                   case "ACTIONABLE":
-                    btnStyle = styles.btnActive;
-                    btnText = "NEEM IN";
-                    iconName = "hand-right";
-                    isDisabled = false;
+                    if (role === "mantelzorger") {
+                      btnStyle = styles.btnWaitingCaregiver;
+                      btnText = "WACHT OP INNAME";
+                      iconName = "time-outline";
+                      iconColor = "#ffaa00";
+                      textColor = "#ffaa00";
+                      isDisabled = true;
+                    } else {
+                      btnStyle = styles.btnActive;
+                      btnText = "NEEM IN";
+                      iconName = "hand-right";
+                      isDisabled = false;
+                    }
                     break;
                   case "WAITING":
                     btnStyle = styles.btnWaiting;
@@ -817,6 +910,7 @@ export default function VandaagScreen() {
                         style={[
                           styles.dot,
                           status === "TAKEN" && styles.dotGreen,
+                          status === "UPCOMING" && styles.dotUpcoming,
                           status === "ACTIONABLE" && styles.dotBlue,
                           status.includes("MISSED") && styles.dotRed,
                         ]}
@@ -828,6 +922,7 @@ export default function VandaagScreen() {
                         <Text
                           style={[
                             styles.timeText,
+                            status === "UPCOMING" && { color: "#ffaa00" },
                             status === "ACTIONABLE" && { color: "#00f0ff" },
                             status.includes("MISSED") && { color: "#ff4444" },
                           ]}
@@ -900,7 +995,6 @@ export default function VandaagScreen() {
         </View>
       </Modal>
 
-      {/* Reassuring dialog shown when a "privacy" notification is tapped */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -985,7 +1079,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   alertSectionHandled: {
-    backgroundColor: "rgba(96, 165, 250, 0.1)", // Blauw/Grijs gloed
+    backgroundColor: "rgba(96, 165, 250, 0.1)",
     borderColor: "rgba(96, 165, 250, 0.3)",
     borderWidth: 1,
     borderRadius: 12,
@@ -1028,6 +1122,12 @@ const styles = StyleSheet.create({
   timelineSidebar: { width: 30, alignItems: "center", paddingTop: 8 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#333" },
   dotGreen: { backgroundColor: "#34C759" },
+  dotUpcoming: {
+    backgroundColor: "#ffaa00",
+    shadowColor: "#ffaa00",
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+  },
   dotBlue: {
     backgroundColor: "#00f0ff",
     shadowColor: "#00f0ff",
@@ -1061,6 +1161,16 @@ const styles = StyleSheet.create({
   compactBtnText: { fontSize: 11, fontWeight: "bold" },
   btnDefault: { backgroundColor: "#333" },
   btnActive: { backgroundColor: "#007AFF" },
+  btnUpcoming: {
+    backgroundColor: "rgba(255, 170, 0, 0.15)",
+    borderWidth: 1,
+    borderColor: "#ffaa00",
+  },
+  btnWaitingCaregiver: {
+    backgroundColor: "rgba(255, 170, 0, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 170, 0, 0.3)",
+  },
   btnTaken: {
     backgroundColor: "rgba(52, 199, 89, 0.2)",
     borderWidth: 1,
