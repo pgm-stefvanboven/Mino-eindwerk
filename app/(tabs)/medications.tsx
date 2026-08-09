@@ -18,11 +18,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useFocusEffect } from "@react-navigation/native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Medication,
   getMedications,
-  saveMedications,
+  updateMedication,
+  addMedication,
   deleteMedication,
 } from "../../data/medications";
 import { useRole } from "../../context/RoleContext";
@@ -56,7 +56,6 @@ const MAX_STOCK_PER_MED = 500;
 const SCAN_COOLDOWN = 2000;
 const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 
-// GECORRIGEERDE GIBBERISH DETECTIE
 const isGibberish = (text: string) => {
   const cleanText = text.trim().toLowerCase();
 
@@ -128,7 +127,6 @@ export default function MedicijnLijstScreen() {
   );
 
   useEffect(() => {
-    // 1. Haal de initiële status op
     const fetchSharedSettings = async () => {
       const { data, error } = await supabase
         .from("shared_settings")
@@ -145,7 +143,6 @@ export default function MedicijnLijstScreen() {
 
     fetchSharedSettings();
 
-    // 2. Abonneer op realtime wijzigingen voor settings met unieke kanaalnaam
     const settingsChannelName = `medicijnlijst-settings-${Math.random().toString(36).slice(2)}`;
     const settingsChannel = supabase
       .channel(settingsChannelName)
@@ -167,7 +164,6 @@ export default function MedicijnLijstScreen() {
       )
       .subscribe();
 
-    // 3. Abonneer op realtime wijzigingen voor medicijnen (Supabase Sync)
     const medsChannelName = `medications-sync-${Math.random().toString(36).slice(2)}`;
     const medsChannel = supabase
       .channel(medsChannelName)
@@ -180,17 +176,14 @@ export default function MedicijnLijstScreen() {
       )
       .subscribe();
 
-    // 4. Cleanup bij unmounten
     return () => {
       supabase.removeChannel(settingsChannel);
       supabase.removeChannel(medsChannel);
     };
   }, []);
 
-  // --- HULPCONTROLE VOOR ADAPTIEVE ZORG ---
   const isManagementLocked = role === "patient" && patientScanLocked;
 
-  // --- CUSTOM ALERT HELPERS ---
   const showCustomSuccess = (title: string, msg: string) => {
     setSuccessData({ title, msg });
     setTimeout(() => setSuccessVisible(true), 500);
@@ -228,7 +221,6 @@ export default function MedicijnLijstScreen() {
     setIsRefilling(refillMode);
     setCameraVisible(true);
 
-    // Speel instructie-audio af
     playRobotAudio("scan_medication");
   };
 
@@ -242,12 +234,10 @@ export default function MedicijnLijstScreen() {
     const foundProduct = BARCODE_DB[data];
 
     if (foundProduct) {
-      // 1. BIJVUL-MODUS (via medicijn-card)
       if (isRefilling && selectedMed) {
         if (
           foundProduct.name.toLowerCase() !== selectedMed.name.toLowerCase()
         ) {
-          // FOUTEF SCAN: Verkeerd medicijn
           playRobotAudio("scan_wrong");
           setTimeout(() => {
             showCustomWarning(
@@ -260,28 +250,34 @@ export default function MedicijnLijstScreen() {
 
         const updateStockLogic = async () => {
           let updatedItem: Medication | null = null;
-          const updatedList = meds.map((m) => {
-            if (m.id === selectedMed.id) {
-              const updatedStock = Math.min(
-                MAX_STOCK_PER_MED,
-                m.stock + foundProduct.stockToAdd,
-              );
-              updatedItem = {
-                ...m,
-                stock: updatedStock,
-                isOrdered: false,
-                lastScannedAt: now,
-              };
-              return updatedItem;
-            }
-            return m;
+
+          setMeds((prevMeds) => {
+            return prevMeds.map((m) => {
+              if (m.id === selectedMed.id) {
+                const updatedStock = Math.min(
+                  MAX_STOCK_PER_MED,
+                  m.stock + foundProduct.stockToAdd,
+                );
+                // isOrdered op FALSE zetten als stock >= 10
+                const isStillOrdered = updatedStock < 10 ? m.isOrdered : false;
+
+                updatedItem = {
+                  ...m,
+                  stock: updatedStock,
+                  isOrdered: isStillOrdered,
+                  lastScannedAt: now,
+                };
+                return updatedItem;
+              }
+              return m;
+            });
           });
 
-          if (updatedItem) setSelectedMed(updatedItem);
-          setMeds(updatedList);
-          await saveMedications(updatedList);
+          if (updatedItem) {
+            setSelectedMed(updatedItem);
+            await updateMedication(updatedItem);
+          }
 
-          // SUCCESVOLLE SCAN
           playRobotAudio("scan_done");
           showCustomSuccess(
             "Gelukt!",
@@ -304,7 +300,6 @@ export default function MedicijnLijstScreen() {
         }
         updateStockLogic();
       } else {
-        // 2. ALGEMENE NIEUWE SCAN (via onderste knop)
         const alreadyExists = meds.some(
           (m) => m.name.toLowerCase() === foundProduct.name.toLowerCase(),
         );
@@ -327,7 +322,6 @@ export default function MedicijnLijstScreen() {
         setIsLocked(true);
         setAddModalVisible(true);
 
-        // SUCCESVOLLE SCAN
         playRobotAudio("scan_done");
         showCustomSuccess(
           "Product Herkend",
@@ -335,7 +329,6 @@ export default function MedicijnLijstScreen() {
         );
       }
     } else {
-      // ONBEKENDE BARCODE
       playRobotAudio("scan_wrong");
       setTimeout(() => {
         showCustomWarning(
@@ -346,7 +339,6 @@ export default function MedicijnLijstScreen() {
     }
   };
 
-  // --- SAVING NEW MEDICINE ---
   const handleSaveNew = async () => {
     const trimmedName = newName.trim();
     const trimmedDosage = newDosage.trim();
@@ -417,18 +409,19 @@ export default function MedicijnLijstScreen() {
       return;
     }
 
+    const finalStock = Math.min(stockAmount, MAX_STOCK_PER_MED);
+
     const newMedItem: Medication = {
       id: Date.now().toString(),
       name: trimmedName,
       dosage: trimmedDosage || "N.v.t.",
-      stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
+      stock: finalStock,
       isOrdered: false,
       lastScannedAt: now,
     };
 
-    const updatedList = [...meds, newMedItem];
-    setMeds(updatedList);
-    await saveMedications(updatedList);
+    setMeds((prev) => [...prev, newMedItem]);
+    await addMedication(newMedItem);
 
     showCustomSuccess(
       "Medicijn toegevoegd",
@@ -496,21 +489,25 @@ export default function MedicijnLijstScreen() {
     }
 
     const stockAmount = parseInt(trimmedStock) || 0;
+    const finalStock = Math.min(stockAmount, MAX_STOCK_PER_MED);
+
+    // isOrdered resetten naar FALSE als stock >= 10
+    const isStillOrdered = finalStock >= 10 ? false : selectedMed.isOrdered;
 
     const updatedMed: Medication = {
       ...selectedMed,
       name: trimmedName,
       dosage: trimmedDosage || "N.v.t.",
-      stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
+      stock: finalStock,
+      isOrdered: isStillOrdered,
     };
 
-    const updatedList = meds.map((m) =>
-      m.id === selectedMed.id ? updatedMed : m,
+    setMeds((prev) =>
+      prev.map((m) => (m.id === selectedMed.id ? updatedMed : m)),
     );
-
-    setMeds(updatedList);
     setSelectedMed(updatedMed);
-    await saveMedications(updatedList);
+
+    await updateMedication(updatedMed);
 
     setIsEditingMed(false);
     showCustomSuccess(
@@ -536,9 +533,7 @@ export default function MedicijnLijstScreen() {
     setEditModalVisible(true);
   };
 
-  // Gedeelde logica om de mantelzorger te verwittigen bij lage voorraad.
-  // Wordt gebruikt door zowel de handmatige knop (notifyCaregiver) als de
-  // automatische detectie hieronder wanneer een medicijn onder de drempel zakt.
+  // Functie voor het versturen van meldingen (enkel aangeroepen via de knop)
   const sendLowStockAlert = async (med: Medication) => {
     try {
       await fetch(`${ROBOT_API}/notify_caregiver`, { method: "POST" });
@@ -586,30 +581,12 @@ export default function MedicijnLijstScreen() {
       console.error("❌ Kon melding niet volledig verwerken:", error);
     }
 
-    setMeds((prevMeds) => {
-      const updatedList = prevMeds.map((m) =>
-        m.id === med.id ? { ...m, isOrdered: true } : m,
-      );
-      saveMedications(updatedList);
-      return updatedList;
-    });
+    const updatedMed = { ...med, isOrdered: true };
+    setMeds((prevMeds) =>
+      prevMeds.map((m) => (m.id === med.id ? updatedMed : m)),
+    );
+    await updateMedication(updatedMed);
   };
-
-  // AUTOMATISCHE MELDING: zodra een medicijn onder de drempel (10) zakt en nog
-  // niet gemeld is, verwittig de mantelzorger meteen — zonder dat de patiënt
-  // eerst zelf op "Vraag aan mantelzorger" moet tikken.
-  // Enkel de patiëntzijde triggert dit (net als de inventory-warning audio in
-  // index.tsx), zodat de mantelzorger z'n eigen app dit niet nogmaals afvuurt.
-  // `isOrdered` wordt door sendLowStockAlert meteen op true gezet en gesynchroniseerd
-  // via saveMedications/de realtime "medications"-subscriptie, wat herhaling voorkomt.
-  useEffect(() => {
-    if (role === "mantelzorger") return;
-
-    const newlyLowMeds = meds.filter((m) => m.stock < 10 && !m.isOrdered);
-    newlyLowMeds.forEach((med) => {
-      sendLowStockAlert(med);
-    });
-  }, [meds, role]);
 
   const notifyCaregiver = async (medName: string) => {
     setIsSending(true);
@@ -630,7 +607,6 @@ export default function MedicijnLijstScreen() {
     }, 1500);
   };
 
-  // Hulpcontrole: Is de voorraad nog ruim voldoende?
   const isStockSufficient = selectedMed && selectedMed.stock >= 10;
 
   return (
@@ -649,7 +625,7 @@ export default function MedicijnLijstScreen() {
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => {
           const isLow = item.stock < 10;
-          const isReported = item.isOrdered === true;
+          const isReported = isLow && item.isOrdered === true;
 
           let statusColor = "#00f0ff";
           let statusIcon: keyof typeof Ionicons.glyphMap = "medkit";
@@ -723,7 +699,6 @@ export default function MedicijnLijstScreen() {
         }}
       />
 
-      {/* VERBERG DE NIEUW-KNOP ALS MANAGEMENT VERGRENDELD IS */}
       {!isManagementLocked && (
         <TouchableOpacity
           style={styles.fab}
@@ -1043,7 +1018,6 @@ export default function MedicijnLijstScreen() {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ flexGrow: 1 }}
             >
-              {/* HEADER MET ACTIES */}
               <View style={styles.modalCardHeader}>
                 <View>
                   <Text style={styles.modalTitle}>
@@ -1079,9 +1053,7 @@ export default function MedicijnLijstScreen() {
               </View>
 
               {!isEditingMed ? (
-                /* --- WEERGAVE MODUS --- */
                 <>
-                  {/* VOORRAAD WEERGAVE */}
                   <View style={styles.stockDisplayContainer}>
                     <Text style={styles.stockNumber}>{selectedMed?.stock}</Text>
                     <Text style={styles.stockLabel}>STUKS IN VOORRAAD</Text>
@@ -1101,7 +1073,6 @@ export default function MedicijnLijstScreen() {
                     )}
                   </View>
 
-                  {/* PRIMAIRE ACTIE: SCAN BIJVULLEN (Enkel zichtbaar wanneer voorraad bijna op is) */}
                   {!isManagementLocked ? (
                     !isStockSufficient ? (
                       <TouchableOpacity
@@ -1150,7 +1121,6 @@ export default function MedicijnLijstScreen() {
                     </View>
                   )}
 
-                  {/* SECUNDAIRE ACTIE: VRAAG AAN MANTELZORGER (bij lage voorraad) */}
                   {selectedMed && selectedMed.stock < 10 && (
                     <TouchableOpacity
                       disabled={isSending || selectedMed.isOrdered}
@@ -1162,14 +1132,18 @@ export default function MedicijnLijstScreen() {
                         if (role === "mantelzorger") {
                           const markAsOrdered = async () => {
                             setIsSending(true);
-                            const updatedList = meds.map((m) =>
-                              m.id === selectedMed.id
-                                ? { ...m, isOrdered: true }
-                                : m,
+                            const updatedMed = {
+                              ...selectedMed,
+                              isOrdered: true,
+                            };
+
+                            setMeds((prevMeds) =>
+                              prevMeds.map((m) =>
+                                m.id === selectedMed.id ? updatedMed : m,
+                              ),
                             );
-                            setMeds(updatedList);
-                            await saveMedications(updatedList);
-                            setSelectedMed({ ...selectedMed, isOrdered: true });
+                            setSelectedMed(updatedMed);
+                            await updateMedication(updatedMed);
 
                             setTimeout(() => {
                               setIsSending(false);
@@ -1221,7 +1195,6 @@ export default function MedicijnLijstScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* SUBTIELE VERWIJDEROPTIE */}
                   {!isManagementLocked && (
                     <TouchableOpacity
                       onPress={() => {
@@ -1255,7 +1228,6 @@ export default function MedicijnLijstScreen() {
                   )}
                 </>
               ) : (
-                /* --- BEWERK MODUS (FORMULIER) --- */
                 <View style={{ width: "100%", marginTop: 10 }}>
                   <Text style={styles.label}>NAAM MEDICIJN</Text>
                   <View style={styles.inputWrapper}>

@@ -6,13 +6,11 @@ export type Medication = {
   dosage: string;
   stock: number;
   isOrdered?: boolean;
-  lastScannedAt?: number; // Houdt bij wanneer de barcode voor het laatst is gescand
+  lastScannedAt?: number;
 };
 
-// Demo med ID (altijd bevestigbaar in de UI)
 export const DEMO_MED_ID = "6";
 
-// 1. The standard database (if you reset the app)
 export const INITIAL_GLOBAL_MEDS: Medication[] = [
   {
     id: "1",
@@ -31,8 +29,6 @@ export const INITIAL_GLOBAL_MEDS: Medication[] = [
     stock: 30,
     isOrdered: false,
   },
-
-  // DEMO: altijd bevestigbaar scenario gebruikt dit medicijn
   {
     id: "6",
     name: "Dafalgan Forte",
@@ -42,19 +38,16 @@ export const INITIAL_GLOBAL_MEDS: Medication[] = [
   },
 ];
 
-// 2. The daily schedule (link times to Medication IDs)
 export const DAILY_SCHEDULE = [
-  { id: 101, medId: "1", time: "08:00", amount: "3x" }, // 3x Paracetamol
-  { id: 102, medId: "3", time: "12:00", amount: "1x" }, // 1x Metoprolol
-  { id: 104, medId: "2", time: "18:00", amount: "1x" }, // 1x Ibuprofen
-  { id: 103, medId: "4", time: "20:00", amount: "2x" }, // 2x Vitamin D
-  { id: 105, medId: "5", time: "22:00", amount: "1x" }, // 1x Dafalgan (normaal)
-  { id: 106, medId: "6", time: "DEMO", amount: "1x" }, // DEMO: altijd bevestigbaar
+  { id: 101, medId: "1", time: "08:00", amount: "3x" },
+  { id: 102, medId: "3", time: "12:00", amount: "1x" },
+  { id: 104, medId: "2", time: "18:00", amount: "1x" },
+  { id: 103, medId: "4", time: "20:00", amount: "2x" },
+  { id: 105, medId: "5", time: "22:00", amount: "1x" },
+  { id: 106, medId: "6", time: "DEMO", amount: "1x" },
 ];
 
-// --- FUNCTIONS FOR THE SCREENS ---
-
-// Get list (from Supabase)
+// 1. Ophalen van alle medicijnen uit Supabase
 export const getMedications = async (): Promise<Medication[]> => {
   try {
     const { data, error } = await supabase
@@ -67,7 +60,6 @@ export const getMedications = async (): Promise<Medication[]> => {
       return INITIAL_GLOBAL_MEDS;
     }
 
-    // Als de cloud database nog helemaal leeg is, vul deze dan met de default meds
     if (!data || data.length === 0) {
       console.log(
         "Database is leeg, INITIAL_GLOBAL_MEDS worden in de cloud gezet...",
@@ -83,25 +75,58 @@ export const getMedications = async (): Promise<Medication[]> => {
   }
 };
 
-// Save / Update list (to Supabase)
-export const saveMedications = async (meds: Medication[]) => {
+// 2. NIEUW: Slechts 1 specifiek medicijn updaten in Supabase (voorkomt race conditions)
+export const updateMedication = async (med: Medication) => {
   try {
-    // Upsert zal bestaande ID's updaten en nieuwe ID's toevoegen
-    const { error } = await supabase.from("medications").upsert(meds);
+    const { error } = await supabase
+      .from("medications")
+      .update({
+        name: med.name,
+        dosage: med.dosage,
+        stock: med.stock,
+        isOrdered: med.isOrdered,
+        lastScannedAt: med.lastScannedAt,
+      })
+      .eq("id", med.id);
 
     if (error) {
-      console.error("Fout bij opslaan in Supabase:", error.message);
+      console.error("Fout bij updaten medicijn in Supabase:", error.message);
     }
+  } catch (e) {
+    console.error("Netwerk of onverwachte fout bij updaten med:", e);
+  }
+};
+
+// 3. NIEUW: Slechts 1 nieuw medicijn toevoegen aan Supabase
+export const addMedication = async (med: Medication) => {
+  try {
+    const { error } = await supabase.from("medications").insert([med]);
+
+    if (error) {
+      console.error(
+        "Fout bij toevoegen van medicijn in Supabase:",
+        error.message,
+      );
+    }
+  } catch (e) {
+    console.error("Netwerk of onverwachte fout bij toevoegen med:", e);
+  }
+};
+
+// Legacy fallback (indien ergens nog de hele lijst bewaard moet worden)
+export const saveMedications = async (meds: Medication[]) => {
+  try {
+    const { error } = await supabase.from("medications").upsert(meds);
+    if (error) console.error("Fout bij opslaan in Supabase:", error.message);
   } catch (e) {
     console.error("Netwerk of onverwachte fout bij opslaan meds:", e);
   }
 };
 
-// Delete single medication (from Supabase)
+// Verwijder 1 medicijn
 export const deleteMedication = async (id: string) => {
   try {
     const { error } = await supabase.from("medications").delete().eq("id", id);
-
     if (error) {
       console.error("Fout bij verwijderen uit Supabase:", error.message);
     }
@@ -110,20 +135,15 @@ export const deleteMedication = async (id: string) => {
   }
 };
 
-// Smart function: decrease stock based on ID and text (e.g. "3x" or "2x")
+// Slimme functie voor voorraad vermindering (nu ook met gerichte update)
 export const decreaseStock = async (medId: string, amountStr: string) => {
   const meds = await getMedications();
+  const targetMed = meds.find((m) => m.id === medId);
+  if (!targetMed) return;
 
-  // Extract the number from the string (e.g. "2x" -> 2)
   const amount = parseInt(amountStr.replace("x", "")) || 1;
+  const newStock = Math.max(0, targetMed.stock - amount);
+  const updatedMed = { ...targetMed, stock: newStock };
 
-  const updatedMeds = meds.map((m) => {
-    if (m.id === medId) {
-      const newStock = Math.max(0, m.stock - amount);
-      return { ...m, stock: newStock };
-    }
-    return m;
-  });
-
-  await saveMedications(updatedMeds);
+  await updateMedication(updatedMed);
 };
