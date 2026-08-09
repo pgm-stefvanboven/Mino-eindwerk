@@ -15,9 +15,6 @@ import { supabase } from "../lib/supabase";
 import { useRole } from "../context/RoleContext";
 import { resolveNotificationRoute } from "../lib/notificationRouting";
 
-// NOTE: Notifications.setNotificationHandler(...) now lives ONLY in
-// app/_layout.tsx — no need to set it again here.
-
 type Notification = {
   id: string;
   title: string;
@@ -27,17 +24,14 @@ type Notification = {
   type?: string;
 };
 
+// Types die specifiek bestemd zijn voor de patiënt
+const PATIENT_NOTIFICATION_TYPES = ["privacy", "reminder_5min"];
+
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const { role } = useRole();
   const router = useRouter();
 
-  // See app/(tabs)/_layout.tsx for the full explanation of this pattern.
-  // Short version: recreating a supabase channel with the same name every
-  // time `role` changed (or the screen re-focused) could race with the
-  // previous channel's async unsubscribe and throw
-  // "cannot add `postgres_changes` callbacks ... after `subscribe()`".
-  // Fix: one channel per real mount, unique name, role read from a ref.
   const roleRef = useRef(role);
   useEffect(() => {
     roleRef.current = role;
@@ -57,13 +51,20 @@ export default function NotificationsScreen() {
 
         if (payload.eventType === "INSERT") {
           const newNotification = payload.new as Notification;
-          if (currentRole === "patient" && newNotification.type !== "privacy")
+          const notifType = newNotification.type || "";
+
+          // Filteren op rol
+          if (
+            currentRole === "patient" &&
+            !PATIENT_NOTIFICATION_TYPES.includes(notifType)
+          )
             return;
           if (
             currentRole === "mantelzorger" &&
-            newNotification.type === "privacy"
+            PATIENT_NOTIFICATION_TYPES.includes(notifType)
           )
             return;
+
           setNotifications((prev) => [newNotification, ...prev]);
         } else if (payload.eventType === "UPDATE") {
           const updatedNotification = payload.new as Notification;
@@ -88,8 +89,6 @@ export default function NotificationsScreen() {
     };
   }, []);
 
-  // Re-run the initial load whenever role changes (the realtime channel
-  // above no longer needs to be recreated for this — see comment above).
   useEffect(() => {
     loadNotifications();
   }, [role]);
@@ -101,9 +100,15 @@ export default function NotificationsScreen() {
       .order("created_at", { ascending: false });
 
     if (role === "patient") {
-      query = query.eq("type", "privacy");
+      // Patiënt ziet privacy én 5-minuten medicatie herinneringen
+      query = query.in("type", PATIENT_NOTIFICATION_TYPES);
     } else if (role === "mantelzorger") {
-      query = query.neq("type", "privacy");
+      // Mantelzorger ziet alle meldingen BEHALVE patiënt-specifieke herinneringen/privacy
+      query = query.not(
+        "type",
+        "in",
+        `("${PATIENT_NOTIFICATION_TYPES.join('","')}")`,
+      );
     }
 
     const { data, error } = await query;
@@ -122,7 +127,6 @@ export default function NotificationsScreen() {
     await supabase.from("notifications").update({ read: true }).eq("id", id);
   };
 
-  // --- ACTIE 1: Individueel Verwijderen (Long Press) ---
   const confirmDelete = (id: string) => {
     Alert.alert(
       "Melding Verwijderen",
@@ -141,7 +145,6 @@ export default function NotificationsScreen() {
     );
   };
 
-  // --- ACTIE 2: Alles Verwijderen (Outlook-stijl) ---
   const confirmDeleteAll = () => {
     Alert.alert(
       "Alles Verwijderen",
@@ -167,15 +170,7 @@ export default function NotificationsScreen() {
     );
   };
 
-  // --- ACTIE 3: Klikbaar & Navigeren naar het juiste scherm ---
   const handleNotificationPress = (item: Notification) => {
-    // IMPORTANT: emergency notifications are special. app/(tabs)/robot.tsx
-    // uses `read: false` on an emergency notification as its signal that
-    // the camera still needs to be auto-unlocked for the caregiver. If we
-    // mark it read here, the moment you tap it to go look at the camera,
-    // robot.tsx's unread-count check finds nothing and never unlocks.
-    // Only handleEmergencyResolved() in robot.tsx should mark these read,
-    // once the caregiver has actually dealt with the situation.
     if (item.type !== "emergency") {
       markAsRead(item.id, item.read);
     }
@@ -195,6 +190,12 @@ export default function NotificationsScreen() {
           iconName: "alert-circle",
           iconColor: "#ef4444",
           title: "Noodsituatie",
+        };
+      case "reminder_5min":
+        return {
+          iconName: "time",
+          iconColor: "#ffaa00",
+          title: "Medicatie Herinnering",
         };
       case "medication":
         return { iconName: "medkit", iconColor: "#3b82f6", title: "Medicatie" };
@@ -244,7 +245,6 @@ export default function NotificationsScreen() {
           <Text style={styles.subTitle}>Lang indrukken om te verwijderen.</Text>
         </View>
 
-        {/* Outlook-stijl Verwijder Alles Knop */}
         {notifications.length > 0 && (
           <TouchableOpacity
             onPress={confirmDeleteAll}
@@ -328,7 +328,7 @@ export default function NotificationsScreen() {
             <Text style={styles.emptyTitle}>Geen nieuwe meldingen</Text>
             <Text style={styles.emptyText}>
               {role === "patient"
-                ? "Systeemmeldingen over uw privacy verschijnen hier."
+                ? "Herinneringen en privacy-meldingen verschijnen hier."
                 : "Meldingen van Mino verschijnen hier zodra er een gebeurtenis plaatsvindt."}
             </Text>
           </View>

@@ -27,7 +27,7 @@ import {
 import { supabase } from "../../lib/supabase";
 import { Pi } from "../../services/pi";
 
-// Stel de notificatie-handler in voor lokale meldingen
+// Stel de notificatie-handler in voor lokale meldingen (compatibel met Expo SDK 50+)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -93,7 +93,7 @@ export default function VandaagScreen() {
     }
   }, [role]);
 
-  // Update klok elke seconde
+  // Update klok elke seconde (zorgt voor live aftellen)
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
@@ -253,7 +253,6 @@ export default function VandaagScreen() {
     if (savedData) {
       const savedTasks: Task[] = JSON.parse(savedData);
       currentTasks = currentTasks.map((t) => {
-        // DEMO MEDICIN (106) NOOIT OP 'TAKEN' ZETTEN BIJ HET LADEN
         if (t.id === 106) return { ...t, taken: false };
 
         const saved = savedTasks.find((st) => st.id === t.id);
@@ -267,7 +266,7 @@ export default function VandaagScreen() {
       await AsyncStorage.setItem(dateKey, JSON.stringify(currentTasks));
     }
 
-    // SYNCHRONISATIE MET SUPABASE MEDICATION_LOGS (Demo overslaan)
+    // SYNCHRONISATIE MET SUPABASE MEDICATION_LOGS
     try {
       const dateStr = selectedDate.toISOString().split("T")[0];
       const { data: dbLogs, error: logErr } = await supabase
@@ -277,7 +276,7 @@ export default function VandaagScreen() {
 
       if (dbLogs && dbLogs.length > 0 && !logErr) {
         currentTasks = currentTasks.map((t) => {
-          if (t.id === 106) return { ...t, taken: false }; // DEMO
+          if (t.id === 106) return { ...t, taken: false };
           const log = dbLogs.find((l: any) => l.task_id === t.id);
           return log ? { ...t, taken: log.taken } : t;
         });
@@ -290,7 +289,6 @@ export default function VandaagScreen() {
     setIsLoading(false);
   }, [selectedDate]);
 
-  // REALTIME SUBSCRIPTION OP TABEL MEDICATION_LOGS
   useEffect(() => {
     const channelName = `tasks-realtime-${Math.random().toString(36).slice(2)}`;
     const channel = supabase
@@ -319,7 +317,6 @@ export default function VandaagScreen() {
   const getTaskStatus = (task: Task) => {
     if (task.taken) return "TAKEN";
 
-    // DEMO IS ALTIJD DIRECT BESCHIKBAAR
     if (task.time === "DEMO") return "ACTIONABLE";
 
     if (isPastDate(selectedDate)) return "MISSED_HISTORIC";
@@ -341,7 +338,7 @@ export default function VandaagScreen() {
     return "WAITING";
   };
 
-  // --- AUTOMATISCHE LOKALE MELDING + BADGE 5 MINUTEN VOOR TIJD NAAR PATIËNT ---
+  // --- AUTOMATISCHE LOKALE MELDING ENKEL EN ALLEEN VOOR DE PATIËNT ---
   useEffect(() => {
     if (role !== "patient" || !isToday(selectedDate)) return;
 
@@ -355,12 +352,7 @@ export default function VandaagScreen() {
           if (!alreadyNotified) {
             await AsyncStorage.setItem(notifyKey, "true");
 
-            await supabase.from("notifications").insert({
-              title: "⏰ Bijna tijd voor medicatie",
-              body: `Het is over 5 minuten tijd om ${task.name} in te nemen.`,
-              type: "reminder_5min",
-            });
-
+            // STUUR ECHTE LOKALE MELDING EN ZET BADGE OP GSM PATIËNT
             await Notifications.scheduleNotificationAsync({
               content: {
                 title: "⏰ Bijna tijd voor medicatie!",
@@ -433,29 +425,24 @@ export default function VandaagScreen() {
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
 
-    // 1. Herinnering stopzetten op de Pi EERST
     await Pi.stopReminder().catch(() => {});
-
-    // 2. Speel het bevestigingsgeluid op de Pi en sluit het slot
     await Pi.confirmMed(id).catch(console.error);
 
-    // Zet de knop op 'taken = true' (toont direct 'OK')
     setTasks((prevTasks) =>
       prevTasks.map((t) => (t.id === id ? { ...t, taken: true } : t)),
     );
 
-    // --- GEARRANGEERD VOOR DEMO KNOP (106 / "DEMO") ---
+    // DEMO RESET NA 5 SEC
     if (task.time === "DEMO" || task.id === 106) {
       setTakingMedication(null);
 
-      // Reset na exact 5 seconden de DEMO knop weer naar 'NEEM IN'
       setTimeout(() => {
         setTasks((prevTasks) =>
           prevTasks.map((t) => (t.id === id ? { ...t, taken: false } : t)),
         );
       }, 5000);
 
-      return; // Stop hier: sla DEMO niet op in DB/AsyncStorage en verminder geen voorraad
+      return;
     }
 
     // REGULIERE MEDICATIE OPSLAAN
@@ -848,8 +835,23 @@ export default function VandaagScreen() {
                     isDisabled = true;
                     break;
                   case "UPCOMING":
+                    // DYNAMISCHE HERINNERING: Bereken het exacte aantal resterende minuten
+                    if (task.time !== "DEMO") {
+                      const [h, m] = task.time.split(":").map(Number);
+                      const taskTime = new Date();
+                      taskTime.setHours(h, m, 0, 0);
+
+                      const diffMs = taskTime.getTime() - now.getTime();
+                      const remainingMin = Math.max(
+                        1,
+                        Math.ceil(diffMs / (60 * 1000)),
+                      );
+                      btnText = `OVER ${remainingMin} MIN`;
+                    } else {
+                      btnText = "OVER 5 MIN";
+                    }
+
                     btnStyle = styles.btnUpcoming;
-                    btnText = "OVER 5 MIN";
                     iconName = "alert-circle-outline";
                     iconColor = "#ffaa00";
                     textColor = "#ffaa00";
