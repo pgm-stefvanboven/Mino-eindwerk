@@ -46,10 +46,19 @@ const MAX_STOCK_PER_MED = 500;
 const SCAN_COOLDOWN = 2000;
 const DEMENTIA_TIME_LOCK = 12 * 60 * 60 * 1000;
 
+// GECORRIGEERDE GIBBERISH DETECTIE (Houdt rekening met mg, g, mcg, ml, etc.)
 const isGibberish = (text: string) => {
-  if (text.length > 2 && !/[aeiouy]/i.test(text)) return true;
-  if (/[bcdfghjklmnpqrstvwxz]{5,}/i.test(text)) return true;
-  if (/(.)\1{3,}/.test(text)) return true;
+  const cleanText = text.trim().toLowerCase();
+
+  // Als de tekst een geldige doseringseenheid bevat (bijv. 500mg, 1g, 10mcg, 5ml), negeer gibberish-check
+  if (/\d+\s*(mg|mcg|g|ml|cl|l|puf|puffs|stuks|pills|iu)\b/i.test(cleanText)) {
+    return false;
+  }
+
+  // Controleer enkel op echte onzin (bijv. 5 opeenvolgende medeklinkers of 4 dezelfde karakters)
+  if (/[bcdfghjklmnpqrstvwxz]{6,}/i.test(cleanText)) return true;
+  if (/(.)\1{3,}/.test(cleanText)) return true;
+
   return false;
 };
 
@@ -336,7 +345,7 @@ export default function MedicijnLijstScreen() {
       trimmedDosage.toLowerCase() !== "n.v.t." &&
       trimmedDosage.toLowerCase() !== "nvt"
     ) {
-      if (trimmedDosage.length < 2) {
+      if (trimmedDosage.length < 1) {
         showCustomWarning(
           "Dosering onduidelijk",
           "Voer een duidelijke dosering in.",
@@ -457,7 +466,7 @@ export default function MedicijnLijstScreen() {
       trimmedDosage.toLowerCase() !== "n.v.t." &&
       trimmedDosage.toLowerCase() !== "nvt"
     ) {
-      if (trimmedDosage.length < 2) {
+      if (trimmedDosage.length < 1) {
         showCustomWarning(
           "Dosering onduidelijk",
           "Voer een duidelijke dosering in.",
