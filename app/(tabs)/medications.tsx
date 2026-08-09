@@ -986,56 +986,63 @@ export default function MedicijnLijstScreen() {
         onRequestClose={() => setEditModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { alignItems: "center" }]}>
-            <View
-              style={{
-                width: "100%",
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 15,
-              }}
-            >
-              <Text style={styles.modalTitle}>
-                {isEditingMed ? "Medicijn Bewerken" : selectedMed?.name}
-              </Text>
-              <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#888" />
-              </TouchableOpacity>
+          <View style={styles.modalContent}>
+            {/* HEADER MET ACTIES */}
+            <View style={styles.modalCardHeader}>
+              <View>
+                <Text style={styles.modalTitle}>
+                  {isEditingMed ? "Bewerken" : selectedMed?.name}
+                </Text>
+                {!isEditingMed && (
+                  <Text style={styles.modalSubTitle}>
+                    {selectedMed?.dosage}
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.headerIconRow}>
+                {/* Bewerken icoon (enkel als beheer niet op slot zit) */}
+                {!isManagementLocked && !isEditingMed && (
+                  <TouchableOpacity
+                    onPress={() => setIsEditingMed(true)}
+                    style={styles.headerIconButton}
+                  >
+                    <Ionicons name="pencil-outline" size={20} color="#00f0ff" />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => setEditModalVisible(false)}
+                  style={styles.headerIconButton}
+                >
+                  <Ionicons name="close" size={22} color="#888" />
+                </TouchableOpacity>
+              </View>
             </View>
 
             {!isEditingMed ? (
-              /* WEERGAVE MODUS (STANDAARD) */
+              /* --- WEERGAVE MODUS --- */
               <>
-                <Text style={{ color: "#888", marginBottom: 20 }}>
-                  {selectedMed?.dosage}
-                </Text>
+                {/* VOORRAAD WEERGAVE */}
+                <View style={styles.stockDisplayContainer}>
+                  <Text style={styles.stockNumber}>{selectedMed?.stock}</Text>
+                  <Text style={styles.stockLabel}>STUKS IN VOORRAAD</Text>
+                  {selectedMed?.lastScannedAt && (
+                    <Text style={styles.lastScanText}>
+                      Laatst bijgevuld:{" "}
+                      {new Date(selectedMed.lastScannedAt).toLocaleString(
+                        "nl-BE",
+                        {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          day: "2-digit",
+                          month: "2-digit",
+                        },
+                      )}
+                    </Text>
+                  )}
+                </View>
 
-                <Text style={styles.label}>HUIDIGE VOORRAAD</Text>
-                <Text
-                  style={{ fontSize: 60, fontWeight: "bold", color: "white" }}
-                >
-                  {selectedMed?.stock}
-                </Text>
-
-                {selectedMed?.lastScannedAt && (
-                  <Text
-                    style={{ color: "#888", marginBottom: 25, fontSize: 13 }}
-                  >
-                    Laatste scan:{" "}
-                    {new Date(selectedMed.lastScannedAt).toLocaleString(
-                      "nl-BE",
-                      {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        day: "2-digit",
-                        month: "2-digit",
-                      },
-                    )}
-                  </Text>
-                )}
-
-                {/* 1. SCANNEN / BIJVULLEN OF VERGRENDELD BANNER */}
+                {/* PRIMAIRE ACTIE: SCAN BIJVULLEN */}
                 {!isManagementLocked ? (
                   <TouchableOpacity
                     style={styles.bigScanBtn}
@@ -1044,11 +1051,15 @@ export default function MedicijnLijstScreen() {
                       setTimeout(() => startCamera(true), 500);
                     }}
                   >
-                    <Ionicons name="scan-circle" size={40} color="white" />
-                    <View>
+                    <Ionicons
+                      name="scan-circle-outline"
+                      size={32}
+                      color="white"
+                    />
+                    <View style={{ marginLeft: 12 }}>
                       <Text style={styles.bigScanTitle}>SCAN NIEUWE DOOS</Text>
                       <Text style={styles.bigScanSub}>
-                        Automatisch bijvullen
+                        Voorraad automatisch verhogen
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -1056,7 +1067,7 @@ export default function MedicijnLijstScreen() {
                   <View style={styles.lockedRefillBanner}>
                     <Ionicons
                       name="shield-checkmark"
-                      size={20}
+                      size={18}
                       color="#00f0ff"
                     />
                     <Text style={styles.lockedRefillText}>
@@ -1065,14 +1076,13 @@ export default function MedicijnLijstScreen() {
                   </View>
                 )}
 
-                {/* 2. BESTEL / MELD KNOP (Voor lage voorraad) */}
+                {/* SECUNDAIRE ACTIE: VRAAG AAN MANTELZORGER (bij lage voorraad) */}
                 {selectedMed && selectedMed.stock < 10 && (
                   <TouchableOpacity
                     disabled={isSending || selectedMed.isOrdered}
                     style={[
-                      styles.notifyBtn,
-                      isSending && { opacity: 0.7 },
-                      selectedMed.isOrdered && styles.notifyBtnOrdered,
+                      styles.notifyBtnSubtle,
+                      selectedMed.isOrdered && styles.notifyBtnOrderedSubtle,
                     ]}
                     onPress={() => {
                       if (role === "mantelzorger") {
@@ -1102,92 +1112,71 @@ export default function MedicijnLijstScreen() {
                     }}
                   >
                     {isSending ? (
-                      <ActivityIndicator color="white" />
+                      <ActivityIndicator color="#ffaa00" size="small" />
                     ) : (
                       <>
                         <Ionicons
                           name={
                             selectedMed.isOrdered
-                              ? "checkmark-circle"
+                              ? "checkmark-circle-outline"
                               : role === "mantelzorger"
-                                ? "cart"
+                                ? "cart-outline"
                                 : "paper-plane-outline"
                           }
-                          size={20}
-                          color="white"
+                          size={18}
+                          color={selectedMed.isOrdered ? "#10b981" : "#ffaa00"}
                         />
-                        <Text style={styles.notifyBtnText}>
+                        <Text
+                          style={[
+                            styles.notifyBtnTextSubtle,
+                            selectedMed.isOrdered && { color: "#10b981" },
+                          ]}
+                        >
                           {selectedMed.isOrdered
                             ? role === "mantelzorger"
                               ? "AANGEDUID ALS BESTELD"
                               : "REEDS GEMELD AAN FAMILIE"
                             : role === "mantelzorger"
-                              ? "MARKEER ALS BESTELD (GERUSTSTELLEN)"
-                              : `VRAAG AAN ${caregiverName.toUpperCase()} ${caregiverRelation ? `(${caregiverRelation.toUpperCase()})` : ""}`}
+                              ? "MARKEER ALS BESTELD"
+                              : `VRAAG AAN ${caregiverName.toUpperCase()}`}
                         </Text>
                       </>
                     )}
                   </TouchableOpacity>
                 )}
 
-                {/* 3. BEWERK & VERWIJDER KNOPPEN (Enkel zichtbaar als beheer NIET vergrendeld is) */}
+                {/* SUBTIELE VERWIJDEROPTIE (Discreet onderin) */}
                 {!isManagementLocked && (
-                  <View
-                    style={{
-                      width: "100%",
-                      marginTop: 15,
-                      gap: 10,
-                      alignItems: "center",
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (selectedMed) {
+                        setEditModalVisible(false);
+                        setTimeout(() => {
+                          showCustomConfirm(
+                            "Medicijn Verwijderen",
+                            `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
+                            () => {
+                              setConfirmVisible(false);
+                              deleteMed(selectedMed.id);
+                            },
+                            "VERWIJDEREN",
+                            true,
+                          );
+                        }, 400);
+                      }
                     }}
+                    style={styles.deleteLink}
                   >
-                    <TouchableOpacity
-                      style={[
-                        styles.closeBtn,
-                        { backgroundColor: "#333", marginTop: 0 },
-                      ]}
-                      onPress={() => setIsEditingMed(true)}
-                    >
-                      <Text style={styles.closeBtnText}>GEGEVENS BEWERKEN</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => {
-                        if (selectedMed) {
-                          setEditModalVisible(false);
-                          setTimeout(() => {
-                            showCustomConfirm(
-                              "Medicijn Verwijderen",
-                              `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
-                              () => {
-                                setConfirmVisible(false);
-                                deleteMed(selectedMed.id);
-                              },
-                              "VERWIJDEREN",
-                              true,
-                            );
-                          }, 400);
-                        }
-                      }}
-                      style={{ padding: 8 }}
-                    >
-                      <Text style={{ color: "#ef4444", fontWeight: "bold" }}>
-                        Verwijder medicijn
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                    <Ionicons name="trash-outline" size={15} color="#ef4444" />
+                    <Text style={styles.deleteLinkText}>
+                      Verwijder medicijn
+                    </Text>
+                  </TouchableOpacity>
                 )}
-
-                {/* SLUITEN KNOP */}
-                <TouchableOpacity
-                  onPress={() => setEditModalVisible(false)}
-                  style={styles.closeBtn}
-                >
-                  <Text style={styles.closeBtnText}>SLUITEN</Text>
-                </TouchableOpacity>
               </>
             ) : (
-              /* BEWERK MODUS (FORMULIER) */
-              <View style={{ width: "100%" }}>
+              /* --- BEWERK MODUS (FORMULIER) --- */
+              <View style={{ width: "100%", marginTop: 10 }}>
                 <Text style={styles.label}>NAAM MEDICIJN</Text>
                 <View style={styles.inputWrapper}>
                   <TextInput
@@ -1323,17 +1312,133 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.85)",
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
     justifyContent: "center",
     alignItems: "center",
   },
   modalContent: {
-    backgroundColor: "#1c1c1e",
+    backgroundColor: "#161618",
     borderRadius: 24,
-    padding: 24,
+    padding: 20,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-    width: "90%",
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    width: "88%",
+    alignItems: "stretch",
+  },
+  modalCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+  modalTitle: {
+    color: "white",
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  modalSubTitle: {
+    color: "#00f0ff",
+    fontSize: 14,
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  headerIconRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  headerIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  stockDisplayContainer: {
+    alignItems: "center",
+    marginVertical: 15,
+    paddingVertical: 10,
+    backgroundColor: "rgba(255, 255, 255, 0.02)",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.03)",
+  },
+  stockNumber: {
+    fontSize: 52,
+    fontWeight: "bold",
+    color: "white",
+    lineHeight: 60,
+  },
+  stockLabel: {
+    color: "#666",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginTop: 2,
+  },
+  lastScanText: {
+    color: "#888",
+    fontSize: 11,
+    marginTop: 8,
+  },
+  bigScanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#007AFF",
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    width: "100%",
+    marginTop: 10,
+  },
+  bigScanTitle: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 15,
+    letterSpacing: 0.5,
+  },
+  bigScanSub: {
+    color: "rgba(255, 255, 255, 0.7)",
+    fontSize: 12,
+    marginTop: 1,
+  },
+  notifyBtnSubtle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(255, 170, 0, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 170, 0, 0.25)",
+    paddingVertical: 12,
+    borderRadius: 14,
+    width: "100%",
+    marginTop: 12,
+  },
+  notifyBtnOrderedSubtle: {
+    backgroundColor: "rgba(16, 185, 129, 0.08)",
+    borderColor: "rgba(16, 185, 129, 0.25)",
+  },
+  notifyBtnTextSubtle: {
+    color: "#ffaa00",
+    fontWeight: "700",
+    fontSize: 12,
+    letterSpacing: 0.5,
+  },
+  deleteLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 18,
+    paddingVertical: 6,
+    alignSelf: "center",
+  },
+  deleteLinkText: {
+    color: "#ef4444",
+    fontSize: 13,
+    fontWeight: "600",
   },
   modalContentFullScreen: {
     padding: 20,
@@ -1347,7 +1452,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 25,
   },
-  modalTitle: { color: "white", fontSize: 22, fontWeight: "bold" },
 
   lockedRefillBanner: {
     flexDirection: "row",
@@ -1555,36 +1659,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: 0.5,
   },
-  bigScanBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 15,
-    backgroundColor: "#007AFF",
-    padding: 20,
-    borderRadius: 16,
-    width: "100%",
-    justifyContent: "center",
-  },
-  bigScanTitle: { color: "white", fontWeight: "bold", fontSize: 18 },
-  bigScanSub: { color: "rgba(255,255,255,0.7)", fontSize: 13 },
-  notifyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#d97706",
-    padding: 14,
-    borderRadius: 12,
-    width: "100%",
-    justifyContent: "center",
-    marginTop: 20,
-  },
-  notifyBtnOrdered: {
-    backgroundColor: "#10b981",
-    borderColor: "#059669",
-    borderWidth: 1,
-    opacity: 1,
-  },
-  notifyBtnText: { color: "white", fontWeight: "bold", fontSize: 11 },
   closeBtn: {
     width: "100%",
     padding: 16,
