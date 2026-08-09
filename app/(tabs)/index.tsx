@@ -61,6 +61,13 @@ const isPastDate = (date: Date) => {
   t.setHours(0, 0, 0, 0);
   return date < t;
 };
+// Lokale datum als YYYY-MM-DD (vermijdt UTC-verschuiving rond middernacht die .toISOString() geeft)
+const toLocalDateStr = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
 
 export default function VandaagScreen() {
   const { role } = useRole();
@@ -352,16 +359,50 @@ export default function VandaagScreen() {
           if (!alreadyNotified) {
             await AsyncStorage.setItem(notifyKey, "true");
 
+            const title = "⏰ Bijna tijd voor medicatie!";
+            const body = `Het is over 5 minuten tijd om ${task.name} in te nemen.`;
+            const dateStr = toLocalDateStr(selectedDate);
+
             // STUUR ECHTE LOKALE MELDING EN ZET BADGE OP GSM PATIËNT
             await Notifications.scheduleNotificationAsync({
               content: {
-                title: "⏰ Bijna tijd voor medicatie!",
-                body: `Het is over 5 minuten tijd om ${task.name} in te nemen.`,
+                title,
+                body,
                 sound: "default",
                 badge: 1,
               },
               trigger: null,
             });
+
+            // RECORD IN SUPABASE ZODAT DE MELDING OOK IN DE MELDINGENLIJST VERSCHIJNT
+            // (server-side idempotent via unique constraint op task_id + reminder_date + type)
+            try {
+              const { error: notifError } = await supabase
+                .from("notifications")
+                .upsert(
+                  {
+                    title,
+                    body,
+                    type: "reminder_5min",
+                    task_id: task.id,
+                    reminder_date: dateStr,
+                    read: false,
+                  },
+                  {
+                    onConflict: "task_id,reminder_date,type",
+                    ignoreDuplicates: true,
+                  },
+                );
+
+              if (notifError) {
+                console.error(
+                  "Fout bij opslaan 5-min herinnering in Supabase:",
+                  notifError,
+                );
+              }
+            } catch (e) {
+              console.error("Fout bij opslaan 5-min herinnering:", e);
+            }
           }
         });
       }
