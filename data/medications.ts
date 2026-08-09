@@ -83,7 +83,7 @@ export const getMedications = async (): Promise<Medication[]> => {
   }
 };
 
-// Save list (to Supabase)
+// Save / Update list (to Supabase)
 export const saveMedications = async (meds: Medication[]) => {
   try {
     // Upsert zal bestaande ID's updaten en nieuwe ID's toevoegen

@@ -89,6 +89,12 @@ export default function MedicijnLijstScreen() {
   const [newDosage, setNewDosage] = useState("");
   const [newStock, setNewStock] = useState("");
 
+  // Existing Medication Edit Form state
+  const [isEditingMed, setIsEditingMed] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDosage, setEditDosage] = useState("");
+  const [editStock, setEditStock] = useState("");
+
   const [isRefilling, setIsRefilling] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -418,6 +424,86 @@ export default function MedicijnLijstScreen() {
     setIsLocked(false);
   };
 
+  // --- SAVING EDITED MEDICINE ---
+  const handleSaveEdit = async () => {
+    if (!selectedMed) return;
+
+    const trimmedName = editName.trim();
+    const trimmedDosage = editDosage.trim();
+    const trimmedStock = editStock.trim();
+
+    if (!trimmedName || !trimmedStock) {
+      showCustomWarning("Invullen aub", "Naam en voorraad zijn verplicht.");
+      return;
+    }
+
+    if (trimmedName.length < 3) {
+      showCustomWarning(
+        "Naam te kort",
+        "Voer een geldige en volledige medicijnnaam in.",
+      );
+      return;
+    }
+    if (isGibberish(trimmedName)) {
+      showCustomWarning(
+        "Ongeldige naam",
+        "De ingevoerde medicijnnaam lijkt op willekeurige letters.",
+      );
+      return;
+    }
+
+    if (
+      trimmedDosage &&
+      trimmedDosage.toLowerCase() !== "n.v.t." &&
+      trimmedDosage.toLowerCase() !== "nvt"
+    ) {
+      if (trimmedDosage.length < 2) {
+        showCustomWarning(
+          "Dosering onduidelijk",
+          "Voer een duidelijke dosering in.",
+        );
+        return;
+      }
+      if (!/\d/.test(trimmedDosage)) {
+        showCustomWarning(
+          "Dosering onduidelijk",
+          "Een dosering bevat meestal een cijfer.",
+        );
+        return;
+      }
+      if (isGibberish(trimmedDosage)) {
+        showCustomWarning(
+          "Ongeldige dosering",
+          "De ingevoerde dosering lijkt op willekeurige letters.",
+        );
+        return;
+      }
+    }
+
+    const stockAmount = parseInt(trimmedStock) || 0;
+
+    const updatedMed: Medication = {
+      ...selectedMed,
+      name: trimmedName,
+      dosage: trimmedDosage || "N.v.t.",
+      stock: Math.min(stockAmount, MAX_STOCK_PER_MED),
+    };
+
+    const updatedList = meds.map((m) =>
+      m.id === selectedMed.id ? updatedMed : m,
+    );
+
+    setMeds(updatedList);
+    setSelectedMed(updatedMed);
+    await saveMedications(updatedList);
+
+    setIsEditingMed(false);
+    showCustomSuccess(
+      "Bijgewerkt",
+      "De gegevens van het medicijn zijn succesvol aangepast.",
+    );
+  };
+
   const deleteMed = async (id: string) => {
     const newList = meds.filter((m) => m.id !== id);
     setMeds(newList);
@@ -428,6 +514,10 @@ export default function MedicijnLijstScreen() {
 
   const openEditModal = (med: Medication) => {
     setSelectedMed(med);
+    setEditName(med.name);
+    setEditDosage(med.dosage);
+    setEditStock(med.stock.toString());
+    setIsEditingMed(false);
     setEditModalVisible(true);
   };
 
@@ -888,7 +978,7 @@ export default function MedicijnLijstScreen() {
         </View>
       </Modal>
 
-      {/* --- MODAL 4: DETAILS / BIJVULLEN / BEHEER --- */}
+      {/* --- MODAL 4: DETAILS / BIJVULLEN / BEHEER / BEWERKEN --- */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -897,150 +987,259 @@ export default function MedicijnLijstScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { alignItems: "center" }]}>
-            <Text style={styles.modalTitle}>{selectedMed?.name}</Text>
-            <Text style={{ color: "#888", marginBottom: 20 }}>
-              {selectedMed?.dosage}
-            </Text>
-
-            <Text style={styles.label}>HUIDIGE VOORRAAD</Text>
-            <Text style={{ fontSize: 60, fontWeight: "bold", color: "white" }}>
-              {selectedMed?.stock}
-            </Text>
-
-            {selectedMed?.lastScannedAt && (
-              <Text style={{ color: "#888", marginBottom: 25, fontSize: 13 }}>
-                Laatste scan:{" "}
-                {new Date(selectedMed.lastScannedAt).toLocaleString("nl-BE", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  day: "2-digit",
-                  month: "2-digit",
-                })}
+            <View
+              style={{
+                width: "100%",
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 15,
+              }}
+            >
+              <Text style={styles.modalTitle}>
+                {isEditingMed ? "Medicijn Bewerken" : selectedMed?.name}
               </Text>
-            )}
-
-            {/* 1. SCANNEN / BIJVULLEN OF VERGRENDELD BANNER */}
-            {!isManagementLocked ? (
-              <TouchableOpacity
-                style={styles.bigScanBtn}
-                onPress={() => {
-                  setEditModalVisible(false);
-                  setTimeout(() => startCamera(true), 500);
-                }}
-              >
-                <Ionicons name="scan-circle" size={40} color="white" />
-                <View>
-                  <Text style={styles.bigScanTitle}>SCAN NIEUWE DOOS</Text>
-                  <Text style={styles.bigScanSub}>Automatisch bijvullen</Text>
-                </View>
+              <TouchableOpacity onPress={() => setEditModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#888" />
               </TouchableOpacity>
-            ) : (
-              <View style={styles.lockedRefillBanner}>
-                <Ionicons name="shield-checkmark" size={20} color="#00f0ff" />
-                <Text style={styles.lockedRefillText}>
-                  Voorraad wordt beheerd door uw mantelzorger
+            </View>
+
+            {!isEditingMed ? (
+              /* WEERGAVE MODUS (STANDAARD) */
+              <>
+                <Text style={{ color: "#888", marginBottom: 20 }}>
+                  {selectedMed?.dosage}
                 </Text>
+
+                <Text style={styles.label}>HUIDIGE VOORRAAD</Text>
+                <Text
+                  style={{ fontSize: 60, fontWeight: "bold", color: "white" }}
+                >
+                  {selectedMed?.stock}
+                </Text>
+
+                {selectedMed?.lastScannedAt && (
+                  <Text
+                    style={{ color: "#888", marginBottom: 25, fontSize: 13 }}
+                  >
+                    Laatste scan:{" "}
+                    {new Date(selectedMed.lastScannedAt).toLocaleString(
+                      "nl-BE",
+                      {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        day: "2-digit",
+                        month: "2-digit",
+                      },
+                    )}
+                  </Text>
+                )}
+
+                {/* 1. SCANNEN / BIJVULLEN OF VERGRENDELD BANNER */}
+                {!isManagementLocked ? (
+                  <TouchableOpacity
+                    style={styles.bigScanBtn}
+                    onPress={() => {
+                      setEditModalVisible(false);
+                      setTimeout(() => startCamera(true), 500);
+                    }}
+                  >
+                    <Ionicons name="scan-circle" size={40} color="white" />
+                    <View>
+                      <Text style={styles.bigScanTitle}>SCAN NIEUWE DOOS</Text>
+                      <Text style={styles.bigScanSub}>
+                        Automatisch bijvullen
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.lockedRefillBanner}>
+                    <Ionicons
+                      name="shield-checkmark"
+                      size={20}
+                      color="#00f0ff"
+                    />
+                    <Text style={styles.lockedRefillText}>
+                      Voorraad wordt beheerd door uw mantelzorger
+                    </Text>
+                  </View>
+                )}
+
+                {/* 2. BESTEL / MELD KNOP (Voor lage voorraad) */}
+                {selectedMed && selectedMed.stock < 10 && (
+                  <TouchableOpacity
+                    disabled={isSending || selectedMed.isOrdered}
+                    style={[
+                      styles.notifyBtn,
+                      isSending && { opacity: 0.7 },
+                      selectedMed.isOrdered && styles.notifyBtnOrdered,
+                    ]}
+                    onPress={() => {
+                      if (role === "mantelzorger") {
+                        const markAsOrdered = async () => {
+                          setIsSending(true);
+                          const updatedList = meds.map((m) =>
+                            m.id === selectedMed.id
+                              ? { ...m, isOrdered: true }
+                              : m,
+                          );
+                          setMeds(updatedList);
+                          await saveMedications(updatedList);
+                          setSelectedMed({ ...selectedMed, isOrdered: true });
+
+                          setTimeout(() => {
+                            setIsSending(false);
+                            showCustomSuccess(
+                              "Aangeduid als besteld",
+                              "De patiënt ziet nu dat je dit hebt geregeld.",
+                            );
+                          }, 1000);
+                        };
+                        markAsOrdered();
+                      } else {
+                        notifyCaregiver(selectedMed.name);
+                      }
+                    }}
+                  >
+                    {isSending ? (
+                      <ActivityIndicator color="white" />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name={
+                            selectedMed.isOrdered
+                              ? "checkmark-circle"
+                              : role === "mantelzorger"
+                                ? "cart"
+                                : "paper-plane-outline"
+                          }
+                          size={20}
+                          color="white"
+                        />
+                        <Text style={styles.notifyBtnText}>
+                          {selectedMed.isOrdered
+                            ? role === "mantelzorger"
+                              ? "AANGEDUID ALS BESTELD"
+                              : "REEDS GEMELD AAN FAMILIE"
+                            : role === "mantelzorger"
+                              ? "MARKEER ALS BESTELD (GERUSTSTELLEN)"
+                              : `VRAAG AAN ${caregiverName.toUpperCase()} ${caregiverRelation ? `(${caregiverRelation.toUpperCase()})` : ""}`}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+
+                {/* 3. BEWERK & VERWIJDER KNOPPEN (Enkel zichtbaar als beheer NIET vergrendeld is) */}
+                {!isManagementLocked && (
+                  <View
+                    style={{
+                      width: "100%",
+                      marginTop: 15,
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    <TouchableOpacity
+                      style={[
+                        styles.closeBtn,
+                        { backgroundColor: "#333", marginTop: 0 },
+                      ]}
+                      onPress={() => setIsEditingMed(true)}
+                    >
+                      <Text style={styles.closeBtnText}>GEGEVENS BEWERKEN</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (selectedMed) {
+                          setEditModalVisible(false);
+                          setTimeout(() => {
+                            showCustomConfirm(
+                              "Medicijn Verwijderen",
+                              `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
+                              () => {
+                                setConfirmVisible(false);
+                                deleteMed(selectedMed.id);
+                              },
+                              "VERWIJDEREN",
+                              true,
+                            );
+                          }, 400);
+                        }
+                      }}
+                      style={{ padding: 8 }}
+                    >
+                      <Text style={{ color: "#ef4444", fontWeight: "bold" }}>
+                        Verwijder medicijn
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* SLUITEN KNOP */}
+                <TouchableOpacity
+                  onPress={() => setEditModalVisible(false)}
+                  style={styles.closeBtn}
+                >
+                  <Text style={styles.closeBtnText}>SLUITEN</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              /* BEWERK MODUS (FORMULIER) */
+              <View style={{ width: "100%" }}>
+                <Text style={styles.label}>NAAM MEDICIJN</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="bv. Paracetamol"
+                    placeholderTextColor="#666"
+                    value={editName}
+                    onChangeText={setEditName}
+                    maxLength={40}
+                  />
+                </View>
+
+                <Text style={styles.label}>DOSERING</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="bv. 500mg"
+                    placeholderTextColor="#666"
+                    value={editDosage}
+                    onChangeText={setEditDosage}
+                    maxLength={15}
+                  />
+                </View>
+
+                <Text style={styles.label}>AANTAL STUKS / VOORRAAD</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0"
+                    placeholderTextColor="#666"
+                    value={editStock}
+                    onChangeText={setEditStock}
+                    keyboardType="numeric"
+                    maxLength={3}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.saveBtn, { marginTop: 25 }]}
+                  onPress={handleSaveEdit}
+                >
+                  <Text style={styles.saveBtnText}>WIJZIGINGEN OPSLAAN</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.closeBtn, { marginTop: 10 }]}
+                  onPress={() => setIsEditingMed(false)}
+                >
+                  <Text style={styles.closeBtnText}>ANNULEREN</Text>
+                </TouchableOpacity>
               </View>
             )}
-
-            {/* 2. BESTEL / MELD KNOP (Voor lage voorraad) */}
-            {selectedMed && selectedMed.stock < 10 && (
-              <TouchableOpacity
-                disabled={isSending || selectedMed.isOrdered}
-                style={[
-                  styles.notifyBtn,
-                  isSending && { opacity: 0.7 },
-                  selectedMed.isOrdered && styles.notifyBtnOrdered,
-                ]}
-                onPress={() => {
-                  if (role === "mantelzorger") {
-                    const markAsOrdered = async () => {
-                      setIsSending(true);
-                      const updatedList = meds.map((m) =>
-                        m.id === selectedMed.id ? { ...m, isOrdered: true } : m,
-                      );
-                      setMeds(updatedList);
-                      await saveMedications(updatedList);
-                      setSelectedMed({ ...selectedMed, isOrdered: true });
-
-                      setTimeout(() => {
-                        setIsSending(false);
-                        showCustomSuccess(
-                          "Aangeduid als besteld",
-                          "De patiënt ziet nu dat je dit hebt geregeld.",
-                        );
-                      }, 1000);
-                    };
-                    markAsOrdered();
-                  } else {
-                    notifyCaregiver(selectedMed.name);
-                  }
-                }}
-              >
-                {isSending ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <>
-                    <Ionicons
-                      name={
-                        selectedMed.isOrdered
-                          ? "checkmark-circle"
-                          : role === "mantelzorger"
-                            ? "cart"
-                            : "paper-plane-outline"
-                      }
-                      size={20}
-                      color="white"
-                    />
-                    <Text style={styles.notifyBtnText}>
-                      {selectedMed.isOrdered
-                        ? role === "mantelzorger"
-                          ? "AANGEDUID ALS BESTELD"
-                          : "REEDS GEMELD AAN FAMILIE"
-                        : role === "mantelzorger"
-                          ? "MARKEER ALS BESTELD (GERUSTSTELLEN)"
-                          : `VRAAG AAN ${caregiverName.toUpperCase()} ${caregiverRelation ? `(${caregiverRelation.toUpperCase()})` : ""}`}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            )}
-
-            {/* 3. VERWIJDERKNOP (Enkel zichtbaar als beheer NIET vergrendeld is) */}
-            {!isManagementLocked && (
-              <TouchableOpacity
-                onPress={() => {
-                  if (selectedMed) {
-                    setEditModalVisible(false);
-                    setTimeout(() => {
-                      showCustomConfirm(
-                        "Medicijn Verwijderen",
-                        `Weet je zeker dat je ${selectedMed.name} definitief wilt verwijderen?`,
-                        () => {
-                          setConfirmVisible(false);
-                          deleteMed(selectedMed.id);
-                        },
-                        "VERWIJDEREN",
-                        true,
-                      );
-                    }, 400);
-                  }
-                }}
-                style={{ marginTop: 20, padding: 10 }}
-              >
-                <Text style={{ color: "#ef4444", fontWeight: "bold" }}>
-                  Verwijder medicijn
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* SLUITEN KNOP */}
-            <TouchableOpacity
-              onPress={() => setEditModalVisible(false)}
-              style={styles.closeBtn}
-            >
-              <Text style={styles.closeBtnText}>SLUITEN</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>

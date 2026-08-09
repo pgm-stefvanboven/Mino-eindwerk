@@ -231,7 +231,6 @@ export default function SettingsScreen() {
     const roundedVolume = Math.round(value);
     setVolume(roundedVolume);
 
-    // NIEUW: Update Supabase in plaats van AsyncStorage
     await supabase
       .from("shared_settings")
       .update({ mino_volume: roundedVolume })
@@ -249,7 +248,6 @@ export default function SettingsScreen() {
     }
   };
 
-  // Voeg deze functie toe net onder je andere toggle-functies (zoals toggleContactLock)
   const toggleVolumeLock = async (value: boolean) => {
     setVolumeLocked(value);
     await supabase
@@ -258,9 +256,8 @@ export default function SettingsScreen() {
       .eq("id", 1);
   };
 
-  // Updates naar Supabase in plaats van AsyncStorage
   const toggleContactLock = async (value: boolean) => {
-    setContactLocked(value); // Optimistische UI update
+    setContactLocked(value);
     await supabase
       .from("shared_settings")
       .update({ contact_locked: value })
@@ -268,7 +265,7 @@ export default function SettingsScreen() {
   };
 
   const togglePatientScanLock = async (value: boolean) => {
-    setPatientScanLocked(value); // Optimistische UI update
+    setPatientScanLocked(value);
     await supabase
       .from("shared_settings")
       .update({ scan_locked: value })
@@ -276,7 +273,7 @@ export default function SettingsScreen() {
   };
 
   const togglePatientDeleteLock = async (value: boolean) => {
-    setPatientDeleteLocked(value); // Optimistische UI update
+    setPatientDeleteLocked(value);
 
     const { error } = await supabase
       .from("shared_settings")
@@ -288,7 +285,6 @@ export default function SettingsScreen() {
         "❌ Fout bij updaten delete_locked in Supabase:",
         error.message,
       );
-      // Draai de toggle lokaal terug als de opslag mislukt
       setPatientDeleteLocked(!value);
       showModal(
         "Fout bij Opslaan",
@@ -315,8 +311,6 @@ export default function SettingsScreen() {
       await Pi.health();
       setRobotOnline(true);
       showModal("Verbonden!", "De robot is bereikbaar.", "success");
-
-      // NIEUW: Zet het veld op slot na een succesvolle verbinding
       setIsEditingUrl(false);
     } catch (e) {
       setRobotOnline(false);
@@ -343,7 +337,6 @@ export default function SettingsScreen() {
   }
 
   const resetZorgScenario = async () => {
-    // Reset de noodtoegang in Supabase
     await supabase
       .from("shared_settings")
       .update({ emergency_camera_unlocked: false })
@@ -361,9 +354,8 @@ export default function SettingsScreen() {
       "Dit verwijdert alle medicatie-historiek en voorraad. Dit kan niet ongedaan gemaakt worden.",
       "warning",
       async () => {
-        setModalVisible(false); // Sluit de eerste bevestigings-modal
+        setModalVisible(false);
 
-        // We updaten Supabase. Dit triggert de listener op alle apparaten
         await supabase
           .from("shared_settings")
           .update({
@@ -732,7 +724,6 @@ export default function SettingsScreen() {
                   </View>
 
                   {isUrlLockedForPatient ? (
-                    // PATIËNT ZIET ENKEL DE TEST KNOP
                     <TouchableOpacity
                       style={styles.actionBtn}
                       onPress={testConnection}
@@ -746,8 +737,7 @@ export default function SettingsScreen() {
                         </Text>
                       )}
                     </TouchableOpacity>
-                  ) : // MANTELZORGER ZIET BEWERKEN OF OPSLAAN & TESTEN
-                  !isEditingUrl ? (
+                  ) : !isEditingUrl ? (
                     <View style={{ flexDirection: "row", gap: 10 }}>
                       <TouchableOpacity
                         style={[
@@ -786,7 +776,6 @@ export default function SettingsScreen() {
                     </TouchableOpacity>
                   )}
 
-                  {/* WAARSCHUWING / SLOTJE VOOR DE PATIËNT */}
                   {isUrlLockedForPatient && (
                     <View
                       style={{
@@ -843,8 +832,8 @@ export default function SettingsScreen() {
                     Vergrendel medicatiebeheer
                   </Text>
                   <Text style={styles.switchSub}>
-                    Voorkom dat de patiënt zelfstandig medicatie scant, bijvult
-                    of verwijdert.
+                    Voorkom dat de patiënt zelfstandig medicatie scant, bijvult,
+                    bewerkt of verwijdert.
                   </Text>
                 </View>
                 <Switch
