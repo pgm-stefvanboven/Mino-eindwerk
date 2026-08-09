@@ -451,6 +451,39 @@ def confirm_med(id):
         "status": "success"
     })
 
+# =========================================================
+# SCAN MEDICATION AUDIO FEEDBACK
+# =========================================================
+
+@app.post("/audio/scan_medication")
+def audio_scan_medication():
+    """Instructie afspelen wanneer de scanner/camera wordt gestart"""
+    print("Audio: Scan medicijn instructie")
+    speak("Scan-medication.mp3")
+    return jsonify({"status": "ok"})
+
+@app.post("/audio/scan_done")
+def audio_scan_done():
+    """Geluid bij een succesvol gescande barcode"""
+    print("Audio: Scan gelukt")
+    speak("Scan-done.mp3")
+    return jsonify({"status": "ok"})
+
+@app.post("/audio/scan_wrong")
+def audio_scan_wrong():
+    """Geluid bij een verkeerde of onbekende barcode"""
+    print("Audio: Verkeerde scan")
+    speak("Scan-wrong.mp3")
+    return jsonify({"status": "ok"})
+
+@app.post("/audio/scan_reminder")
+def audio_scan_reminder():
+    """Specifieke herinnering om medicijn te scannen"""
+    print("Audio: Herinnering om te scannen")
+    
+    # Optioneel met LED feedback (blauw knipperen)
+    play_with_led("Scan-reminder.mp3", 0, 150, 255)
+    return jsonify({"status": "ok"})
 
 # =========================================================
 # START TIMER

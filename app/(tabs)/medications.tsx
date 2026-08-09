@@ -39,6 +39,16 @@ const BARCODE_DB: Record<
   "3056789012342": { name: "Metoprolol", dosage: "50mg", stockToAdd: 100 },
 };
 
+const playRobotAudio = async (endpoint: string) => {
+  try {
+    await fetch(`${ROBOT_API}/audio/${endpoint}`, { method: "POST" });
+  } catch (error) {
+    console.log(
+      `Kon audio ${endpoint} niet afspelen op robot (offline/demo mode)`,
+    );
+  }
+};
+
 const ROBOT_API = "http://10.178.148.75:5001";
 
 // --- SYSTEM LIMITS ---
@@ -217,6 +227,9 @@ export default function MedicijnLijstScreen() {
     }
     setIsRefilling(refillMode);
     setCameraVisible(true);
+
+    // Speel instructie-audio af
+    playRobotAudio("scan_medication");
   };
 
   const handleBarcodeScanned = ({ data }: { data: string }) => {
@@ -234,6 +247,8 @@ export default function MedicijnLijstScreen() {
         if (
           foundProduct.name.toLowerCase() !== selectedMed.name.toLowerCase()
         ) {
+          // FOUTEF SCAN: Verkeerd medicijn
+          playRobotAudio("scan_wrong");
           setTimeout(() => {
             showCustomWarning(
               "Foutief Medicijn",
@@ -265,6 +280,9 @@ export default function MedicijnLijstScreen() {
           if (updatedItem) setSelectedMed(updatedItem);
           setMeds(updatedList);
           await saveMedications(updatedList);
+
+          // SUCCESVOLLE SCAN
+          playRobotAudio("scan_done");
           showCustomSuccess(
             "Gelukt!",
             `Voorraad verhoogd met ${foundProduct.stockToAdd} stuks.`,
@@ -275,6 +293,7 @@ export default function MedicijnLijstScreen() {
           selectedMed.lastScannedAt &&
           now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
         ) {
+          playRobotAudio("scan_wrong");
           setTimeout(() => {
             showCustomWarning(
               "Al bijgevuld",
@@ -291,6 +310,7 @@ export default function MedicijnLijstScreen() {
         );
 
         if (alreadyExists) {
+          playRobotAudio("scan_wrong");
           setTimeout(() => {
             showCustomWarning(
               "Medicijn bestaat al",
@@ -306,12 +326,17 @@ export default function MedicijnLijstScreen() {
         setNewStock(foundProduct.stockToAdd.toString());
         setIsLocked(true);
         setAddModalVisible(true);
+
+        // SUCCESVOLLE SCAN
+        playRobotAudio("scan_done");
         showCustomSuccess(
           "Product Herkend",
           `Doosje met ${foundProduct.stockToAdd} stuks gevonden.`,
         );
       }
     } else {
+      // ONBEKENDE BARCODE
+      playRobotAudio("scan_wrong");
       setTimeout(() => {
         showCustomWarning(
           "Onbekend Product",
