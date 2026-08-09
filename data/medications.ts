@@ -54,23 +54,6 @@ export const DAILY_SCHEDULE = [
 
 // --- FUNCTIONS FOR THE SCREENS ---
 
-// Merge helper: zorg dat nieuwe meds (zoals id "6") altijd worden toegevoegd
-const mergeMeds = (stored: Medication[], base: Medication[]) => {
-  const map = new Map<string, Medication>();
-  for (const m of stored) map.set(m.id, m);
-
-  // Voeg ontbrekende meds toe vanuit base
-  let changed = false;
-  for (const b of base) {
-    if (!map.has(b.id)) {
-      map.set(b.id, b);
-      changed = true;
-    }
-  }
-
-  return { merged: Array.from(map.values()), changed };
-};
-
 // Get list (from Supabase)
 export const getMedications = async (): Promise<Medication[]> => {
   try {
@@ -93,18 +76,7 @@ export const getMedications = async (): Promise<Medication[]> => {
       return INITIAL_GLOBAL_MEDS;
     }
 
-    // Migratie: voeg ontbrekende default meds toe (zoals demo id "6") als ze niet in de cloud staan
-    const { merged, changed } = mergeMeds(
-      data as Medication[],
-      INITIAL_GLOBAL_MEDS,
-    );
-
-    // Sla terug op in de cloud als er iets ontbrak in de huidige tabel
-    if (changed) {
-      await saveMedications(merged);
-    }
-
-    return merged;
+    return data as Medication[];
   } catch (e) {
     console.error("Netwerk of onverwachte fout bij ophalen meds:", e);
     return INITIAL_GLOBAL_MEDS;
@@ -122,6 +94,19 @@ export const saveMedications = async (meds: Medication[]) => {
     }
   } catch (e) {
     console.error("Netwerk of onverwachte fout bij opslaan meds:", e);
+  }
+};
+
+// Delete single medication (from Supabase)
+export const deleteMedication = async (id: string) => {
+  try {
+    const { error } = await supabase.from("medications").delete().eq("id", id);
+
+    if (error) {
+      console.error("Fout bij verwijderen uit Supabase:", error.message);
+    }
+  } catch (e) {
+    console.error("Netwerk of onverwachte fout bij verwijderen med:", e);
   }
 };
 

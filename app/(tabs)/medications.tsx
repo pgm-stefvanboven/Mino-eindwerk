@@ -23,6 +23,7 @@ import {
   Medication,
   getMedications,
   saveMedications,
+  deleteMedication,
 } from "../../data/medications";
 import { useRole } from "../../context/RoleContext";
 import { supabase } from "../../lib/supabase";
@@ -417,10 +418,10 @@ export default function MedicijnLijstScreen() {
     setIsLocked(false);
   };
 
-  const deleteMed = (id: string) => {
+  const deleteMed = async (id: string) => {
     const newList = meds.filter((m) => m.id !== id);
     setMeds(newList);
-    saveMedications(newList);
+    await deleteMedication(id);
     setEditModalVisible(false);
     showCustomSuccess("Verwijderd", "Het medicijn is succesvol verwijderd.");
   };
