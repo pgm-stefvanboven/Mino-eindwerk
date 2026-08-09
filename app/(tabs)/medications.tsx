@@ -536,9 +536,10 @@ export default function MedicijnLijstScreen() {
     setEditModalVisible(true);
   };
 
-  const notifyCaregiver = async (medName: string) => {
-    setIsSending(true);
-
+  // Gedeelde logica om de mantelzorger te verwittigen bij lage voorraad.
+  // Wordt gebruikt door zowel de handmatige knop (notifyCaregiver) als de
+  // automatische detectie hieronder wanneer een medicijn onder de drempel zakt.
+  const sendLowStockAlert = async (med: Medication) => {
     try {
       await fetch(`${ROBOT_API}/notify_caregiver`, { method: "POST" });
     } catch (e) {
@@ -558,7 +559,7 @@ export default function MedicijnLijstScreen() {
 
       await supabase.from("notifications").insert({
         title: "Voorraad bijna op",
-        body: `De medicatie ${medName} is bijna op en moet bijbesteld worden.`,
+        body: `De medicatie ${med.name} is bijna op en moet bijbesteld worden.`,
         type: "stock",
       });
 
@@ -567,8 +568,8 @@ export default function MedicijnLijstScreen() {
           to: settings.caregiver_push_token,
           sound: "default",
           title: "📦 Voorraad bijna op",
-          body: `Mino meldt: ${medName} is bijna op en moet bijbesteld worden.`,
-          data: { type: "stock", medName: medName, route: "/medications" },
+          body: `Mino meldt: ${med.name} is bijna op en moet bijbesteld worden.`,
+          data: { type: "stock", medName: med.name, route: "/medications" },
         };
 
         await fetch("https://exp.host/--/api/v2/push/send", {
@@ -585,14 +586,38 @@ export default function MedicijnLijstScreen() {
       console.error("❌ Kon melding niet volledig verwerken:", error);
     }
 
-    if (selectedMed) {
-      const updatedList = meds.map((m) => {
-        if (m.id === selectedMed.id) return { ...m, isOrdered: true };
-        return m;
-      });
-      setMeds(updatedList);
+    setMeds((prevMeds) => {
+      const updatedList = prevMeds.map((m) =>
+        m.id === med.id ? { ...m, isOrdered: true } : m,
+      );
       saveMedications(updatedList);
-      setSelectedMed({ ...selectedMed, isOrdered: true });
+      return updatedList;
+    });
+  };
+
+  // AUTOMATISCHE MELDING: zodra een medicijn onder de drempel (10) zakt en nog
+  // niet gemeld is, verwittig de mantelzorger meteen — zonder dat de patiënt
+  // eerst zelf op "Vraag aan mantelzorger" moet tikken.
+  // Enkel de patiëntzijde triggert dit (net als de inventory-warning audio in
+  // index.tsx), zodat de mantelzorger z'n eigen app dit niet nogmaals afvuurt.
+  // `isOrdered` wordt door sendLowStockAlert meteen op true gezet en gesynchroniseerd
+  // via saveMedications/de realtime "medications"-subscriptie, wat herhaling voorkomt.
+  useEffect(() => {
+    if (role === "mantelzorger") return;
+
+    const newlyLowMeds = meds.filter((m) => m.stock < 10 && !m.isOrdered);
+    newlyLowMeds.forEach((med) => {
+      sendLowStockAlert(med);
+    });
+  }, [meds, role]);
+
+  const notifyCaregiver = async (medName: string) => {
+    setIsSending(true);
+
+    const med = selectedMed;
+    if (med) {
+      await sendLowStockAlert(med);
+      setSelectedMed({ ...med, isOrdered: true });
     }
 
     setTimeout(() => {

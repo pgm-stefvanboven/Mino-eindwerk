@@ -157,7 +157,16 @@ def monitor_loop():
         # 1. BATTERY WARNING
         if LAST_BATTERY_PERCENTAGE <= 15 and not BATTERY_WARNING_GIVEN:
             print("Batterij is laag, speel melding af.")
+
+            # Lokale audio op de robot zelf (hoorbaar in huis bij de patiënt)
             speak("Battery.mp3")
+
+            # Melding + push naar de mantelzorger (dit ontbrak volledig)
+            title = "Batterij bijna leeg"
+            body = f"De batterij van Mino staat op {LAST_BATTERY_PERCENTAGE}% en moet opgeladen worden."
+            save_notification(title, body, "battery")
+            send_push_notification(title, body, "battery")
+
             BATTERY_WARNING_GIVEN = True
         elif LAST_BATTERY_PERCENTAGE > 20:
             # Reset it once it's fully charged
@@ -210,7 +219,7 @@ def get_caregiver_token():
 
     return None
 
-def send_push_notification(title, body):
+def send_push_notification(title, body, notification_type=None):
 
     token = get_caregiver_token()
 
@@ -224,7 +233,8 @@ def send_push_notification(title, body):
         "body": body,
         "sound": "default",
         "data": {
-            "url": "/robot"
+            "url": "/robot",
+            "type": notification_type,
         }
     }
 

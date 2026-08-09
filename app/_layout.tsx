@@ -4,17 +4,38 @@ import { useEffect, useRef } from "react";
 import * as Notifications from "expo-notifications";
 import { RoleProvider, useRole } from "../context/RoleContext";
 import { resolveNotificationRoute } from "../lib/notificationRouting";
+import {
+  getCurrentRoleForNotifications,
+  setCurrentRoleForNotifications,
+} from "../lib/notificationRole";
+
+// Notificatietypes waarvoor het GELUID enkel voor de patiënt bedoeld is
+// (bv. batterij-waarschuwing: de patiënt hoort dit al via de robot zelf).
+// De mantelzorger krijgt de melding nog steeds te zien, enkel zonder geluid.
+const SOUND_MUTED_FOR_CAREGIVER_TYPES = ["battery"];
 
 // Make sure this is only set up once, app-wide (was previously duplicated
 // in app/(tabs)/_layout.tsx and app/notifications.tsx too).
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = (notification.request.content.data ?? {}) as {
+      type?: string;
+    };
+    const role = getCurrentRoleForNotifications();
+
+    const muteSoundForThisDevice =
+      role === "mantelzorger" &&
+      !!data.type &&
+      SOUND_MUTED_FOR_CAREGIVER_TYPES.includes(data.type);
+
+    return {
+      shouldShowAlert: true,
+      shouldPlaySound: !muteSoundForThisDevice,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    };
+  },
 });
 
 function routeFromResponse(response: Notifications.NotificationResponse) {
@@ -36,8 +57,15 @@ function routeFromResponse(response: Notifications.NotificationResponse) {
  */
 function NotificationTapRouter() {
   const router = useRouter();
-  const { loading } = useRole();
+  const { role, loading } = useRole();
   const handledColdStart = useRef(false);
+
+  // Houd de losstaande modulevariabele in sync met de huidige rol, zodat de
+  // (buiten React geregistreerde) Notifications.setNotificationHandler hierboven
+  // weet of dit toestel de patiënt of de mantelzorger is.
+  useEffect(() => {
+    setCurrentRoleForNotifications(role ?? null);
+  }, [role]);
 
   // Case A: app is already open (foreground or backgrounded) and the
   // user taps a notification.
