@@ -31,12 +31,52 @@ Notifications.setNotificationHandler({
     return {
       shouldShowAlert: true,
       shouldPlaySound: !muteSoundForThisDevice,
-      shouldSetBadge: false,
+      shouldSetBadge: true,
       shouldShowBanner: true,
       shouldShowList: true,
     };
   },
 });
+
+/**
+ * Vraagt notificatie-toestemming en registreert een Android-kanaal.
+ *
+ * Zonder dit toont Android GEEN enkele notificatie in het systeemvak, ook al
+ * lukt scheduleNotificationAsync() zelf perfect — sinds Android 8 is een
+ * geregistreerd "channel" verplicht, en zonder expliciete toestemming toont
+ * geen enkel platform iets. Dit is waarschijnlijk de reden dat er nergens
+ * iets verscheen "zoals bij WhatsApp", op geen van beide toestellen.
+ */
+async function ensureNotificationSetup() {
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== "granted") {
+    console.warn("Notificatie-toestemming NIET verleend door gebruiker.");
+    return;
+  }
+
+  await Notifications.setNotificationChannelAsync("default", {
+    name: "Mino meldingen",
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: "#00f0ff",
+    sound: "default",
+  });
+}
+
+function NotificationSetup() {
+  useEffect(() => {
+    ensureNotificationSetup();
+  }, []);
+
+  return null;
+}
 
 function routeFromResponse(response: Notifications.NotificationResponse) {
   const content = response.notification.request.content;
@@ -104,6 +144,7 @@ export default function RootLayout() {
   return (
     <RoleProvider>
       <StatusBar barStyle="light-content" />
+      <NotificationSetup />
       <NotificationTapRouter />
       <Stack
         screenOptions={{

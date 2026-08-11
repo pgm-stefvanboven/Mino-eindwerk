@@ -20,8 +20,8 @@ import * as NavigationBar from "expo-navigation-bar";
 import { supabase } from "../../lib/supabase";
 import { useRole } from "../../context/RoleContext";
 
-const VIDEO_IP = "http://10.178.148.75:5001";
-const COMMAND_IP = "http://10.178.148.75:5002";
+const VIDEO_IP = "http://172.31.149.75:5001";
+const COMMAND_IP = "http://172.31.149.75:5002";
 
 // --- THEMA ---
 const THEME = {

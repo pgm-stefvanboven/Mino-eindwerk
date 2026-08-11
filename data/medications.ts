@@ -9,6 +9,13 @@ export type Medication = {
   lastScannedAt?: number;
 };
 
+export type ScheduleItem = {
+  id: number;
+  medId: string;
+  time: string;
+  amount: string;
+};
+
 export const DEMO_MED_ID = "6";
 
 export const INITIAL_GLOBAL_MEDS: Medication[] = [
@@ -38,7 +45,7 @@ export const INITIAL_GLOBAL_MEDS: Medication[] = [
   },
 ];
 
-export const DAILY_SCHEDULE = [
+export const DAILY_SCHEDULE: ScheduleItem[] = [
   { id: 101, medId: "1", time: "08:00", amount: "3x" },
   { id: 102, medId: "3", time: "12:00", amount: "1x" },
   { id: 104, medId: "2", time: "18:00", amount: "1x" },
@@ -47,7 +54,8 @@ export const DAILY_SCHEDULE = [
   { id: 106, medId: "6", time: "DEMO", amount: "1x" },
 ];
 
-// 1. Ophalen van alle medicijnen uit Supabase
+// --- MEDICATIE SUPABASE FUNCTIES ---
+
 export const getMedications = async (): Promise<Medication[]> => {
   try {
     const { data, error } = await supabase
@@ -61,9 +69,6 @@ export const getMedications = async (): Promise<Medication[]> => {
     }
 
     if (!data || data.length === 0) {
-      console.log(
-        "Database is leeg, INITIAL_GLOBAL_MEDS worden in de cloud gezet...",
-      );
       await supabase.from("medications").insert(INITIAL_GLOBAL_MEDS);
       return INITIAL_GLOBAL_MEDS;
     }
@@ -75,7 +80,6 @@ export const getMedications = async (): Promise<Medication[]> => {
   }
 };
 
-// 2. NIEUW: Slechts 1 specifiek medicijn updaten in Supabase (voorkomt race conditions)
 export const updateMedication = async (med: Medication) => {
   try {
     const { error } = await supabase
@@ -89,31 +93,21 @@ export const updateMedication = async (med: Medication) => {
       })
       .eq("id", med.id);
 
-    if (error) {
-      console.error("Fout bij updaten medicijn in Supabase:", error.message);
-    }
+    if (error) console.error("Fout bij updaten medicijn:", error.message);
   } catch (e) {
     console.error("Netwerk of onverwachte fout bij updaten med:", e);
   }
 };
 
-// 3. NIEUW: Slechts 1 nieuw medicijn toevoegen aan Supabase
 export const addMedication = async (med: Medication) => {
   try {
     const { error } = await supabase.from("medications").insert([med]);
-
-    if (error) {
-      console.error(
-        "Fout bij toevoegen van medicijn in Supabase:",
-        error.message,
-      );
-    }
+    if (error) console.error("Fout bij toevoegen medicijn:", error.message);
   } catch (e) {
     console.error("Netwerk of onverwachte fout bij toevoegen med:", e);
   }
 };
 
-// Legacy fallback (indien ergens nog de hele lijst bewaard moet worden)
 export const saveMedications = async (meds: Medication[]) => {
   try {
     const { error } = await supabase.from("medications").upsert(meds);
@@ -123,19 +117,16 @@ export const saveMedications = async (meds: Medication[]) => {
   }
 };
 
-// Verwijder 1 medicijn
 export const deleteMedication = async (id: string) => {
   try {
     const { error } = await supabase.from("medications").delete().eq("id", id);
-    if (error) {
+    if (error)
       console.error("Fout bij verwijderen uit Supabase:", error.message);
-    }
   } catch (e) {
     console.error("Netwerk of onverwachte fout bij verwijderen med:", e);
   }
 };
 
-// Slimme functie voor voorraad vermindering (nu ook met gerichte update)
 export const decreaseStock = async (medId: string, amountStr: string) => {
   const meds = await getMedications();
   const targetMed = meds.find((m) => m.id === medId);
@@ -146,4 +137,55 @@ export const decreaseStock = async (medId: string, amountStr: string) => {
   const updatedMed = { ...targetMed, stock: newStock };
 
   await updateMedication(updatedMed);
+};
+
+// --- NIEUW: SCHEMA (DAILY SCHEDULE) SUPABASE FUNCTIES ---
+
+export const getDailySchedule = async (): Promise<ScheduleItem[]> => {
+  try {
+    const { data, error } = await supabase
+      .from("daily_schedule")
+      .select("*")
+      .order("time", { ascending: true });
+
+    if (error || !data || data.length === 0) {
+      // Vul Supabase aan indien de tabel leeg is
+      if (!data || data.length === 0) {
+        await supabase.from("daily_schedule").insert(DAILY_SCHEDULE);
+      }
+      return DAILY_SCHEDULE;
+    }
+
+    return data as ScheduleItem[];
+  } catch (e) {
+    console.error("Fout bij ophalen schema uit Supabase:", e);
+    return DAILY_SCHEDULE;
+  }
+};
+
+export const updateScheduleItem = async (item: ScheduleItem) => {
+  try {
+    const { error } = await supabase
+      .from("daily_schedule")
+      .update({ time: item.time, amount: item.amount })
+      .eq("id", item.id);
+
+    if (error) console.error("Fout bij bijwerken schema item:", error.message);
+  } catch (e) {
+    console.error("Fout bij bijwerken schema item:", e);
+  }
+};
+
+export const deleteScheduleItem = async (id: number) => {
+  try {
+    const { error } = await supabase
+      .from("daily_schedule")
+      .delete()
+      .eq("id", id);
+
+    if (error)
+      console.error("Fout bij verwijderen schema item:", error.message);
+  } catch (e) {
+    console.error("Fout bij verwijderen schema item:", e);
+  }
 };

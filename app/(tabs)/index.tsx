@@ -8,35 +8,36 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRole } from "../../context/RoleContext";
 import {
-  DAILY_SCHEDULE,
   decreaseStock,
+  getDailySchedule,
   getMedications,
+  deleteScheduleItem,
+  updateScheduleItem,
   Medication,
+  ScheduleItem,
 } from "../../data/medications";
 import { supabase } from "../../lib/supabase";
 import { Pi } from "../../services/pi";
 
-// Stel de notificatie-handler in voor lokale meldingen (compatibel met Expo SDK 50+)
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// LET OP: de globale Notifications.setNotificationHandler(...) staat NIET
+// hier, maar centraal in app/_layout.tsx. setNotificationHandler is een
+// singleton — twee registraties laten elkaar willekeurig overschrijven
+// (welke module toevallig als laatste laadt "wint"), wat precies de oorzaak
+// was van het inconsistente badge-gedrag. Voeg hier dus geen tweede
+// registratie meer toe.
 
 type Task = {
   id: number;
@@ -48,7 +49,7 @@ type Task = {
 };
 
 const DEMO_MISS_LIMIT_SECONDS = 5;
-const ROBOT_API_URL = "http://10.178.148.75:5001";
+const ROBOT_API_URL = "http://172.31.149.75:5001";
 
 // --- DATE LOGIC ---
 const isSameDay = (d1: Date, d2: Date) =>
@@ -61,7 +62,7 @@ const isPastDate = (date: Date) => {
   t.setHours(0, 0, 0, 0);
   return date < t;
 };
-// Lokale datum als YYYY-MM-DD (vermijdt UTC-verschuiving rond middernacht die .toISOString() geeft)
+// Lokale datum als YYYY-MM-DD
 const toLocalDateStr = (d: Date) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -86,6 +87,14 @@ export default function VandaagScreen() {
   const [alarmStage, setAlarmStage] = useState<
     "idle" | "reminder" | "waiting" | "emergency"
   >("idle");
+  const [scheduleLocked, setScheduleLocked] = useState(false);
+
+  // STATE VOOR BEWERKMODAL INNAMEMOMENT
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editTime, setEditTime] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  // Bepaalt of de velden bewerkbaar zijn (knop toont "Bewerken" vs "Bewaar")
+  const [isEditingSchedule, setIsEditingSchedule] = useState(false);
 
   const [contact, setContact] = useState({
     name: "",
@@ -93,12 +102,15 @@ export default function VandaagScreen() {
     phone: "",
   });
 
-  // Reset het rode bolletje (badge '1') zodra de patiënt het scherm bekijkt
-  useEffect(() => {
-    if (role === "patient") {
-      Notifications.setBadgeCountAsync(0).catch(() => {});
-    }
-  }, [role]);
+  // Reset het rode bolletje (badge) zodra dit scherm bekeken wordt — voor
+  // BEIDE rollen (was voorheen enkel voor de patiënt, waardoor de badge van
+  // de mantelzorger nooit werd teruggezet), en telkens opnieuw bij elk
+  // bezoek aan dit tabblad, niet enkel eenmalig bij het opstarten.
+  useFocusEffect(
+    useCallback(() => {
+      Notifications.setBadgeCountAsync(0).catch(() => { });
+    }, []),
+  );
 
   // Update klok elke seconde (zorgt voor live aftellen)
   useEffect(() => {
@@ -111,6 +123,40 @@ export default function VandaagScreen() {
     setPrivacyModalVisible(true);
     router.setParams({ privacyAlert: undefined } as any);
   }, [params.privacyAlert]);
+
+  // LUISTER NAAR SCHEDULE_LOCKED IN SHARED_SETTINGS
+  useEffect(() => {
+    const checkScheduleLock = async () => {
+      const { data } = await supabase
+        .from("shared_settings")
+        .select("schedule_locked")
+        .eq("id", 1)
+        .single();
+      if (data) {
+        setScheduleLocked(data.schedule_locked ?? false);
+      }
+    };
+
+    checkScheduleLock();
+
+    const channelName = `home-schedule-lock-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "shared_settings" },
+        (payload) => {
+          if (payload.new.schedule_locked !== undefined) {
+            setScheduleLocked(payload.new.schedule_locked);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   useEffect(() => {
     if (role !== "patient") return;
@@ -216,7 +262,7 @@ export default function VandaagScreen() {
     return selectedDate >= l;
   };
 
-  // 1. EERST: loadData declareren met useCallback
+  // 1. OPHALEN VAN DATA (MEDICIJNEN + INNAMEMOMENTEN UIT SUPABASE)
   const loadData = useCallback(async () => {
     setIsLoading(true);
 
@@ -237,10 +283,13 @@ export default function VandaagScreen() {
     const currentMeds = await getMedications();
     setLowStockMeds(currentMeds.filter((m) => m.stock < 10));
 
+    // OPHALEN UIT DYNAMISCHE SUPABASE TABEL DAILY_SCHEDULE
+    const rawSchedule = await getDailySchedule();
+
     const dateKey = `tasks_${selectedDate.toDateString()}`;
     const savedData = await AsyncStorage.getItem(dateKey);
 
-    let currentTasks = DAILY_SCHEDULE.map((scheduleItem) => {
+    let currentTasks: Task[] = rawSchedule.map((scheduleItem) => {
       const med = currentMeds.find((m) => m.id === scheduleItem.medId);
 
       let medName = med ? med.name : "Onbekend";
@@ -297,12 +346,19 @@ export default function VandaagScreen() {
     setIsLoading(false);
   }, [selectedDate]);
 
-  // 2. DAARNA PAS: Realtime listener die loadData gebruikt
+  // 2. REALTIME LISTENERS FOR DAILY_SCHEDULE, LOGS AND MEDICATIONS
+  // 2. REALTIME LISTENERS FOR DAILY_SCHEDULE, LOGS AND MEDICATIONS
   useEffect(() => {
     const channelName = `home-realtime-${Math.random().toString(36).slice(2)}`;
     const channel = supabase
       .channel(channelName)
-      // Luister naar inname-logs
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "daily_schedule" },
+        () => {
+          loadData();
+        },
+      )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "medication_logs" },
@@ -310,35 +366,9 @@ export default function VandaagScreen() {
           loadData();
         },
       )
-      // Luister direct naar wijzigingen in voorraad / isOrdered
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "medications" },
-        () => {
-          loadData();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [loadData]);
-
-  // Focus effect om opnieuw te laden bij schermwissel
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData]),
-  );
-
-  useEffect(() => {
-    const channelName = `tasks-realtime-${Math.random().toString(36).slice(2)}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "medication_logs" },
         () => {
           loadData();
         },
@@ -381,6 +411,163 @@ export default function VandaagScreen() {
     return "WAITING";
   };
 
+  // --- BEWERKEN & VERWIJDEREN LOGICA VOOR INNAMEMOMENTEN ---
+  const handleOpenEditModal = (task: Task) => {
+    const status = getTaskStatus(task);
+
+    // BEVEILIGING: Niet meer bewerkbaar als het moment al voorbij of ingenomen is
+    if (status === "TAKEN" || status.includes("MISSED")) {
+      return;
+    }
+
+    if (role === "patient" && scheduleLocked) {
+      Alert.alert(
+        "Vergrendeld",
+        "Het aanpassen van innamemomenten is vergrendeld door de mantelzorger.",
+      );
+      return;
+    }
+    setEditingTask(task);
+    setEditTime(task.time);
+    setEditAmount(task.amount);
+    setIsEditingSchedule(false);
+  };
+
+  // Enkel cijfers en de ':'-scheiding toestaan tijdens het typen — voorkomt
+  // dat er letters of andere tekens in het tijdstip terechtkomen.
+  const handleEditTimeChange = (text: string) => {
+    const digitsOnly = text.replace(/[^0-9]/g, "").slice(0, 4);
+    const formatted =
+      digitsOnly.length >= 3
+        ? `${digitsOnly.slice(0, 2)}:${digitsOnly.slice(2)}`
+        : digitsOnly;
+    setEditTime(formatted);
+  };
+
+  // Enkel cijfers en 'x' toestaan (formaat "2x", "3x", ...).
+  const handleEditAmountChange = (text: string) => {
+    const sanitized = text
+      .toLowerCase()
+      .replace(/[^0-9x]/g, "")
+      .slice(0, 4);
+    setEditAmount(sanitized);
+  };
+
+  const isValidTimeFormat = (timeStr: string): boolean =>
+    /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/.test(timeStr);
+
+  // Enkel relevant wanneer we vandaag bekijken — voor een toekomstige dag
+  // heeft "in het verleden" geen betekenis.
+  const isTimeInPast = (timeStr: string): boolean => {
+    if (!isToday(selectedDate)) return false;
+    if (!isValidTimeFormat(timeStr)) return false;
+
+    const [hh, mm] = timeStr.split(":").map(Number);
+    const candidate = new Date();
+    candidate.setHours(hh, mm, 0, 0);
+
+    return candidate.getTime() < new Date().getTime();
+  };
+
+  const handleSaveTaskEdit = async () => {
+    if (!editingTask) return;
+
+    // Nog niet in bewerkmodus? Eerste tik = enkel de velden ontgrendelen.
+    if (!isEditingSchedule) {
+      setIsEditingSchedule(true);
+      return;
+    }
+
+    if (!isValidTimeFormat(editTime)) {
+      Alert.alert(
+        "Ongeldig tijdstip",
+        "Gebruik het formaat UU:MM (bv. 08:00), enkel cijfers.",
+      );
+      return;
+    }
+
+    if (isTimeInPast(editTime)) {
+      Alert.alert(
+        "Tijdstip ligt in het verleden",
+        "Je kan een innamemoment niet instellen op een tijdstip dat vandaag al voorbij is.",
+      );
+      return;
+    }
+
+    const amountNumber = parseInt(editAmount, 10);
+    if (!amountNumber || amountNumber < 1) {
+      Alert.alert(
+        "Ongeldige hoeveelheid",
+        "De hoeveelheid moet minstens 1 zijn.",
+      );
+      return;
+    }
+
+    const isTimeChanged = editingTask.time !== editTime;
+    const oldTime = editingTask.time;
+
+    // 1. Update de daily_schedule tabel in Supabase
+    await updateScheduleItem({
+      id: editingTask.id,
+      medId: editingTask.medId,
+      time: editTime,
+      amount: editAmount,
+    });
+
+    // 2. Indien de patiënt het innametijdstip heeft gewijzigd: MELDING STUREN NAAR MANTELZORGER!
+    if (isTimeChanged && role === "patient") {
+      const cleanMedName = editingTask.name.replace(/^[0-9]+x\s*/, "");
+      const title = "⏰ Innamemoment gewijzigd";
+      const body = `De patiënt heeft het innametijdstip van ${cleanMedName} aangepast van ${oldTime} naar ${editTime}.`;
+
+      await supabase.from("notifications").insert([
+        {
+          title,
+          body,
+          type: "medication",
+          read: false,
+        },
+      ]);
+    }
+
+    setIsEditingSchedule(false);
+    setEditingTask(null);
+    loadData();
+  };
+
+  const handleDeleteTask = async () => {
+    if (!editingTask) return;
+
+    Alert.alert(
+      "Innamemoment Verwijderen",
+      `Weet je zeker dat je het innamemoment (${editingTask.time}) voor ${editingTask.name} wilt verwijderen?`,
+      [
+        { text: "Annuleren", style: "cancel" },
+        {
+          text: "Verwijderen",
+          style: "destructive",
+          onPress: async () => {
+            await deleteScheduleItem(editingTask.id);
+
+            if (role === "patient") {
+              await supabase.from("notifications").insert([
+                {
+                  title: "🗑️ Innamemoment verwijderd",
+                  body: `De patiënt heeft het innamemoment om ${editingTask.time} voor ${editingTask.name} verwijderd.`,
+                  type: "medication",
+                  read: false,
+                },
+              ]);
+            }
+
+            setEditingTask(null);
+            loadData();
+          },
+        },
+      ],
+    );
+  };
+
   // --- AUTOMATISCHE LOKALE MELDING ENKEL EN ALLEEN VOOR DE PATIËNT ---
   useEffect(() => {
     if (role !== "patient" || !isToday(selectedDate)) return;
@@ -390,60 +577,102 @@ export default function VandaagScreen() {
       const status = getTaskStatus(task);
 
       if (status === "UPCOMING") {
-        const notifyKey = `notified_5min_${selectedDate.toDateString()}_${task.id}`;
-        AsyncStorage.getItem(notifyKey).then(async (alreadyNotified) => {
-          if (!alreadyNotified) {
-            await AsyncStorage.setItem(notifyKey, "true");
+        const title = "⏰ Bijna tijd voor medicatie!";
+        const body = `Het is over 5 minuten tijd om ${task.name} in te nemen.`;
+        const dateStr = toLocalDateStr(selectedDate);
 
-            const title = "⏰ Bijna tijd voor medicatie!";
-            const body = `Het is over 5 minuten tijd om ${task.name} in te nemen.`;
-            const dateStr = toLocalDateStr(selectedDate);
-
-            // STUUR ECHTE LOKALE MELDING EN ZET BADGE OP GSM PATIËNT
-            await Notifications.scheduleNotificationAsync({
-              content: {
-                title,
-                body,
-                sound: "default",
-                badge: 1,
-              },
-              trigger: null,
-            });
-
-            // RECORD IN SUPABASE ZODAT DE MELDING OOK IN DE MELDINGENLIJST VERSCHIJNT
-            // (server-side idempotent via unique constraint op task_id + reminder_date + type)
-            try {
-              const { error: notifError } = await supabase
-                .from("notifications")
-                .upsert(
-                  {
-                    title,
-                    body,
-                    type: "reminder_5min",
-                    task_id: task.id,
-                    reminder_date: dateStr,
-                    read: false,
-                  },
-                  {
-                    onConflict: "task_id,reminder_date,type",
-                    ignoreDuplicates: true,
-                  },
-                );
-
-              if (notifError) {
-                console.error(
-                  "Fout bij opslaan 5-min herinnering in Supabase:",
-                  notifError,
-                );
-              }
-            } catch (e) {
-              console.error("Fout bij opslaan 5-min herinnering:", e);
+        // RECORD IN SUPABASE: opzettelijk NIET achter de AsyncStorage-vlag
+        // hieronder. Deze upsert is idempotent dankzij de unique index op
+        // (task_id, reminder_date, type) + ignoreDuplicates, dus het is veilig
+        // om dit bij elke tick opnieuw te proberen. Zo blokkeert een eenmalige
+        // mislukte poging (bv. netwerkfout, DB-migratie nog niet toegepast)
+        // niet stilzwijgend de rest van de dag — de eerstvolgende geslaagde
+        // poging zet gewoon de rij, en daarna doet de unique index de rest.
+        supabase
+          .from("notifications")
+          .upsert(
+            {
+              title,
+              body,
+              type: "reminder_5min",
+              task_id: task.id,
+              reminder_date: dateStr,
+              read: false,
+            },
+            {
+              onConflict: "task_id,reminder_date,type",
+              ignoreDuplicates: true,
+            },
+          )
+          .then(({ error: notifError }) => {
+            if (notifError) {
+              console.error(
+                "Fout bij opslaan 5-min herinnering in Supabase:",
+                notifError,
+              );
             }
-          }
-        });
+          });
+
       }
     });
   }, [now, tasks, selectedDate, role]);
+
+  // --- OS-NIVEAU VOORAF INGEPLANDE HERINNERING (werkt ook buiten de app) ---
+  // Hierboven wordt de Supabase-rij pas geschreven op het moment dat de app
+  // zelf, terwijl open, "merkt" dat een taak UPCOMING is. Voor de ECHTE
+  // melding (die ook buiten de app moet verschijnen, zoals WhatsApp) volstaat
+  // dat niet: trigger: null toont enkel iets als de app op dat exacte moment
+  // actief JS draait. Deze effect plant de melding daarom vooraf in bij het
+  // besturingssysteem, met een echte datum — het OS levert ze dan zelf af,
+  // ongeacht of de app open, op de achtergrond, of volledig gesloten is.
+  //
+  // Een vaste `identifier` per taak+dag zorgt dat herhaalde aanroepen (bv.
+  // bij elke wijziging van `tasks`) de vorige planning overschrijven i.p.v.
+  // duplicaten te maken.
+  useEffect(() => {
+    if (role !== "patient" || !isToday(selectedDate)) return;
+
+    tasks.forEach(async (task) => {
+      const identifier = `reminder-${toLocalDateStr(selectedDate)}-${task.id}`;
+
+      if (task.taken || task.time === "DEMO") {
+        await Notifications.cancelScheduledNotificationAsync(
+          identifier,
+        ).catch(() => { });
+        return;
+      }
+
+      const [hours, minutes] = task.time.split(":").map(Number);
+      const taskTime = new Date(selectedDate);
+      taskTime.setHours(hours, minutes, 0, 0);
+      const triggerDate = new Date(taskTime.getTime() - 5 * 60 * 1000);
+
+      // Tijdstip al voorbij? Niets (meer) in te plannen.
+      if (triggerDate.getTime() <= Date.now()) {
+        await Notifications.cancelScheduledNotificationAsync(
+          identifier,
+        ).catch(() => { });
+        return;
+      }
+
+      await Notifications.scheduleNotificationAsync({
+        identifier,
+        content: {
+          title: "⏰ Bijna tijd voor medicatie!",
+          body: `Het is over 5 minuten tijd om ${task.name} in te nemen.`,
+          sound: "default",
+          badge: 1,
+          data: { type: "reminder_5min", route: "/notifications" },
+        },
+        trigger: {
+          // Als je Expo SDK ouder is dan SDK 50 en dit een type-fout geeft,
+          // vervang dit object gewoon door: trigger: triggerDate
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: triggerDate,
+        },
+      });
+    });
+  }, [tasks, selectedDate, role]);
 
   const changeDate = (days: number) => {
     const newDate = new Date(selectedDate);
@@ -487,7 +716,7 @@ export default function VandaagScreen() {
         if (current === id) {
           fetch(`${ROBOT_API_URL}/lock_close`, {
             method: "POST",
-          }).catch(() => {});
+          }).catch(() => { });
           return null;
         }
         return current;
@@ -502,7 +731,7 @@ export default function VandaagScreen() {
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
 
-    await Pi.stopReminder().catch(() => {});
+    await Pi.stopReminder().catch(() => { });
     await Pi.confirmMed(id).catch(console.error);
 
     setTasks((prevTasks) =>
@@ -561,14 +790,14 @@ export default function VandaagScreen() {
     setShowDemoModal(true);
     setAlarmStage("reminder");
 
-    await fetch("http://10.178.148.75:5001/start_reminder", {
+    await fetch("http://172.31.149.75:5001/start_reminder", {
       method: "POST",
     });
 
     setTimeout(async () => {
       setAlarmStage("waiting");
 
-      await fetch("http://10.178.148.75:5001/second_reminder", {
+      await fetch("http://172.31.149.75:5001/second_reminder", {
         method: "POST",
       });
     }, 5000);
@@ -579,7 +808,7 @@ export default function VandaagScreen() {
 
       await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
 
-      await fetch("http://10.178.148.75:5001/care_emergency", {
+      await fetch("http://172.31.149.75:5001/care_emergency", {
         method: "POST",
       });
     }, 10000);
@@ -595,6 +824,8 @@ export default function VandaagScreen() {
       })
       .toUpperCase();
   };
+
+  const isPatientScheduleLocked = role === "patient" && scheduleLocked;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -904,6 +1135,10 @@ export default function VandaagScreen() {
                 let btnText = "";
                 let textColor = "white";
 
+                // Enkel te bewerken als het nog niet ingenomen of voorbij is
+                const canEditThisTask =
+                  status !== "TAKEN" && !status.includes("MISSED");
+
                 switch (status) {
                   case "TAKEN":
                     btnStyle = styles.btnTaken;
@@ -912,7 +1147,6 @@ export default function VandaagScreen() {
                     isDisabled = true;
                     break;
                   case "UPCOMING":
-                    // DYNAMISCHE HERINNERING: Bereken het exacte aantal resterende minuten
                     if (task.time !== "DEMO") {
                       const [h, m] = task.time.split(":").map(Number);
                       const taskTime = new Date();
@@ -996,6 +1230,8 @@ export default function VandaagScreen() {
                       />
                       {index < tasks.length - 1 && <View style={styles.line} />}
                     </View>
+
+                    {/* OVERZICHTELIJKE CARD */}
                     <View style={styles.compactContent}>
                       <View style={{ flex: 1 }}>
                         <Text
@@ -1010,6 +1246,26 @@ export default function VandaagScreen() {
                         </Text>
                         <Text style={styles.nameText}>{task.name}</Text>
                       </View>
+
+                      {/* BEWERK PICOTGRAM / SLOTJE (ENKEL ALS MOMENT NOG NIET VOORBIJ/INGENOMEN IS) */}
+                      {canEditThisTask && (
+                        <TouchableOpacity
+                          onPress={() => handleOpenEditModal(task)}
+                          style={styles.editCardBtn}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons
+                            name={
+                              isPatientScheduleLocked
+                                ? "lock-closed-outline"
+                                : "create-outline"
+                            }
+                            size={18}
+                            color={isPatientScheduleLocked ? "#666" : "#00f0ff"}
+                          />
+                        </TouchableOpacity>
+                      )}
+
                       <TouchableOpacity
                         disabled={isDisabled}
                         onPress={() =>
@@ -1020,7 +1276,7 @@ export default function VandaagScreen() {
                         style={[styles.compactBtn, btnStyle]}
                       >
                         {status === "WAITING" ||
-                        status === "FUTURE_DAY" ? null : (
+                          status === "FUTURE_DAY" ? null : (
                           <Ionicons
                             name={iconName}
                             size={16}
@@ -1051,6 +1307,86 @@ export default function VandaagScreen() {
         </ScrollView>
       )}
 
+      {/* RUSTIGE BEWERK MODAL MET PRULLENBAK ICOON IN HEADER */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={editingTask !== null}
+        onRequestClose={() => setEditingTask(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.editModalContent}>
+            {/* KOP MET TITEL EN SUBTIELE PRULLENBAK RECHTSBOVEN */}
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.editModalTitle}>Innamemoment Aanpassen</Text>
+              <TouchableOpacity
+                onPress={handleDeleteTask}
+                style={styles.deleteIconBtn}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trash-outline" size={20} color="#ff4444" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.editModalSubText}>{editingTask?.name}</Text>
+
+            <Text style={styles.label}>Innametijdstip (HH:MM)</Text>
+            <View style={styles.inputRow}>
+              <Ionicons name="time-outline" size={20} color="#666" />
+              <TextInput
+                style={[styles.input, !isEditingSchedule && { color: "#888" }]}
+                value={editTime}
+                onChangeText={handleEditTimeChange}
+                placeholder="08:00"
+                placeholderTextColor="#444"
+                editable={isEditingSchedule}
+                keyboardType="number-pad"
+                maxLength={5}
+              />
+            </View>
+
+            <Text style={styles.label}>Aantal / Dosering</Text>
+            <View style={styles.inputRow}>
+              <Ionicons name="funnel-outline" size={20} color="#666" />
+              <TextInput
+                style={[styles.input, !isEditingSchedule && { color: "#888" }]}
+                value={editAmount}
+                onChangeText={handleEditAmountChange}
+                placeholder="1x"
+                placeholderTextColor="#444"
+                editable={isEditingSchedule}
+                keyboardType="default"
+                maxLength={4}
+              />
+            </View>
+
+            <View style={{ width: "100%", gap: 10, marginTop: 10 }}>
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#007AFF" }]}
+                onPress={handleSaveTaskEdit}
+              >
+                <Text style={styles.actionBtnText}>
+                  {!isEditingSchedule ? "BEWERKEN" : "BEWAAR"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: "#2c2c2e" }]}
+                onPress={() => {
+                  setIsEditingSchedule(false);
+                  setEditingTask(null);
+                }}
+              >
+                <Text style={[styles.actionBtnText, { color: "#ccc" }]}>
+                  ANNULEREN
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* DEMO MODAL */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -1074,6 +1410,7 @@ export default function VandaagScreen() {
         </View>
       </Modal>
 
+      {/* PRIVACY MODAL */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -1142,14 +1479,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   list: { padding: 16 },
-  alertSection: {
-    backgroundColor: "rgba(255, 170, 0, 0.1)",
-    borderColor: "rgba(255, 170, 0, 0.3)",
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 20,
-  },
   alertHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   alertTitle: {
     color: "#ffaa00",
@@ -1157,47 +1486,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textTransform: "uppercase",
   },
-  alertSectionHandled: {
-    backgroundColor: "rgba(96, 165, 250, 0.1)",
-    borderColor: "rgba(96, 165, 250, 0.3)",
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 20,
-  },
-  stockChip: {
-    backgroundColor: "rgba(0,0,0,0.3)",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 170, 0, 0.4)",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  stockChipReported: {
-    backgroundColor: "rgba(96, 165, 250, 0.1)",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.3)",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  stockChipCountReported: {
-    color: "#60a5fa",
-    fontWeight: "bold",
-    fontSize: 12,
-  },
   stockChipName: { color: "white", fontSize: 15, fontWeight: "bold" },
   stockChipCount: { color: "#ffaa00", fontWeight: "bold", fontSize: 13 },
   timelineContainer: { marginTop: 0 },
-  compactCard: { flexDirection: "row", height: 70 },
+  compactCard: { flexDirection: "row", height: 75 },
   timelineSidebar: { width: 30, alignItems: "center", paddingTop: 8 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#333" },
   dotGreen: { backgroundColor: "#34C759" },
@@ -1219,22 +1511,28 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(30,30,35, 0.4)",
+    backgroundColor: "#1c1c1e",
     borderRadius: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.03)",
+    borderColor: "rgba(255,255,255,0.05)",
   },
   timeText: { color: "#888", fontSize: 12, fontWeight: "bold" },
   nameText: { color: "white", fontSize: 15, fontWeight: "600" },
+  editCardBtn: {
+    padding: 8,
+    marginRight: 6,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
   compactBtn: {
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
     flexDirection: "row",
     alignItems: "center",
-    minWidth: 90,
+    minWidth: 85,
     justifyContent: "center",
   },
   compactBtnText: { fontSize: 11, fontWeight: "bold" },
@@ -1264,9 +1562,65 @@ const styles = StyleSheet.create({
   btnFuture: { backgroundColor: "rgba(192, 132, 252, 0.1)" },
   demoLink: { alignSelf: "center", marginTop: 20, padding: 10 },
   demoLinkText: { color: "#333", fontSize: 12 },
+
+  // STYLING BEWERK MODAL
+  editModalContent: {
+    backgroundColor: "#1c1c1e",
+    width: "85%",
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  modalHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  editModalTitle: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  deleteIconBtn: {
+    padding: 6,
+    backgroundColor: "rgba(255,68,68,0.1)",
+    borderRadius: 8,
+  },
+  editModalSubText: {
+    color: "#888",
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  label: { color: "#888", fontSize: 12, marginBottom: 6, marginLeft: 4 },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#2c2c2e",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+  },
+  input: {
+    flex: 1,
+    color: "white",
+    paddingVertical: 12,
+    marginLeft: 10,
+    fontSize: 16,
+  },
+  actionBtn: {
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  actionBtnText: { color: "white", fontWeight: "bold", fontSize: 14 },
+
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.8)",
+    backgroundColor: "rgba(0,0,0,0.85)",
     justifyContent: "center",
     alignItems: "center",
   },

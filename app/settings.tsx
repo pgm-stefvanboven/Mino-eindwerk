@@ -42,6 +42,7 @@ export default function SettingsScreen() {
   const [contactLocked, setContactLocked] = useState(false);
   const [patientScanLocked, setPatientScanLocked] = useState(false);
   const [patientDeleteLocked, setPatientDeleteLocked] = useState(false);
+  const [scheduleLocked, setScheduleLocked] = useState(false); // NIEUW: vergrendeling innamemomenten
   const lastResetSignal = useRef<number | null>(null);
 
   const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
@@ -76,6 +77,7 @@ export default function SettingsScreen() {
         setContactLocked(data.contact_locked);
         setPatientScanLocked(data.scan_locked);
         setPatientDeleteLocked(data.delete_locked);
+        setScheduleLocked(data.schedule_locked ?? false);
         setCameraAlwaysEnabled(data.camera_always_enabled);
 
         if (data.contact_name) setContactName(data.contact_name);
@@ -112,6 +114,9 @@ export default function SettingsScreen() {
             setPatientScanLocked(updatedSettings.scan_locked);
           if (updatedSettings.delete_locked !== undefined) {
             setPatientDeleteLocked(updatedSettings.delete_locked);
+          }
+          if (updatedSettings.schedule_locked !== undefined) {
+            setScheduleLocked(updatedSettings.schedule_locked);
           }
           if (updatedSettings.camera_always_enabled !== undefined)
             setCameraAlwaysEnabled(updatedSettings.camera_always_enabled);
@@ -296,6 +301,28 @@ export default function SettingsScreen() {
     }
   };
 
+  // NIEUW: Schakelaar voor innamemomenten vergrendeling
+  const toggleScheduleLock = async (value: boolean) => {
+    setScheduleLocked(value);
+    const { error } = await supabase
+      .from("shared_settings")
+      .update({ schedule_locked: value })
+      .eq("id", 1);
+
+    if (error) {
+      console.error(
+        "❌ Fout bij updaten schedule_locked in Supabase:",
+        error.message,
+      );
+      setScheduleLocked(!value);
+      showModal(
+        "Fout bij Opslaan",
+        "Kon de instelling niet opslaan in Supabase.",
+        "error",
+      );
+    }
+  };
+
   const toggleCameraAlwaysEnabled = async (value: boolean) => {
     setCameraAlwaysEnabled(value);
     await supabase
@@ -361,6 +388,7 @@ export default function SettingsScreen() {
           .update({
             contact_locked: false,
             scan_locked: false,
+            schedule_locked: false,
             camera_always_enabled: false,
             emergency_camera_unlocked: false,
             reset_signal: Date.now(),
@@ -806,6 +834,26 @@ export default function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>ADAPTIEVE ZORG (PATIËNT)</Text>
             <View style={styles.card}>
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={styles.switchTitle}>
+                    Vergrendel innamemomenten
+                  </Text>
+                  <Text style={styles.switchSub}>
+                    Voorkom dat de patiënt innamemomenten op het beginscherm
+                    aanpast of verwijdert.
+                  </Text>
+                </View>
+                <Switch
+                  value={scheduleLocked}
+                  onValueChange={toggleScheduleLock}
+                  trackColor={{ false: "#333", true: "#ffaa00" }}
+                  thumbColor="white"
+                />
+              </View>
+
+              <View style={styles.divider} />
+
               <View style={styles.switchRow}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.switchTitle}>

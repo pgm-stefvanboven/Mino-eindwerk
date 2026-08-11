@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as Notifications from "expo-notifications";
 import { supabase } from "../lib/supabase";
 import { useRole } from "../context/RoleContext";
 import { resolveNotificationRoute } from "../lib/notificationRouting";
@@ -116,7 +117,33 @@ export default function NotificationsScreen() {
       console.error(error);
       return;
     }
-    setNotifications(data ?? []);
+
+    const list = data ?? [];
+    setNotifications(list);
+
+    // Alles wat hier zichtbaar en nog ongelezen is, meteen als gelezen
+    // markeren — zoals bij WhatsApp: het openen van de lijst zelf is wat
+    // een melding "gelezen" maakt, niet enkel het aantikken van elk item
+    // afzonderlijk. Dit is ook wat de badge daadwerkelijk laat kloppen met
+    // Supabase i.p.v. permanent op "1" te blijven staan.
+    const unreadIds = list.filter((n) => !n.read).map((n) => n.id);
+    if (unreadIds.length > 0) {
+      setNotifications((prev) =>
+        prev.map((n) => (unreadIds.includes(n.id) ? { ...n, read: true } : n)),
+      );
+
+      const { error: readError } = await supabase
+        .from("notifications")
+        .update({ read: true })
+        .in("id", unreadIds);
+
+      if (readError) {
+        console.error("Fout bij markeren als gelezen:", readError);
+      }
+    }
+
+    // Badge van het app-icoon synchroniseren met de werkelijke toestand.
+    await Notifications.setBadgeCountAsync(0).catch(() => { });
   };
 
   const markAsRead = async (id: string, isRead: boolean) => {
