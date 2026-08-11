@@ -235,6 +235,7 @@ export default function MedicijnLijstScreen() {
 
     if (foundProduct) {
       if (isRefilling && selectedMed) {
+        // 1. Controleer of het juiste medicijn gescand is
         if (
           foundProduct.name.toLowerCase() !== selectedMed.name.toLowerCase()
         ) {
@@ -248,43 +249,7 @@ export default function MedicijnLijstScreen() {
           return;
         }
 
-        const updateStockLogic = async () => {
-          let updatedItem: Medication | null = null;
-
-          setMeds((prevMeds) => {
-            return prevMeds.map((m) => {
-              if (m.id === selectedMed.id) {
-                const updatedStock = Math.min(
-                  MAX_STOCK_PER_MED,
-                  m.stock + foundProduct.stockToAdd,
-                );
-                // isOrdered op FALSE zetten als stock >= 10
-                const isStillOrdered = updatedStock < 10 ? m.isOrdered : false;
-
-                updatedItem = {
-                  ...m,
-                  stock: updatedStock,
-                  isOrdered: isStillOrdered,
-                  lastScannedAt: now,
-                };
-                return updatedItem;
-              }
-              return m;
-            });
-          });
-
-          if (updatedItem) {
-            setSelectedMed(updatedItem);
-            await updateMedication(updatedItem);
-          }
-
-          playRobotAudio("scan_done");
-          showCustomSuccess(
-            "Gelukt!",
-            `Voorraad verhoogd met ${foundProduct.stockToAdd} stuks.`,
-          );
-        };
-
+        // 2. Controleer DEMENTIA_TIME_LOCK
         if (
           selectedMed.lastScannedAt &&
           now - selectedMed.lastScannedAt < DEMENTIA_TIME_LOCK
@@ -298,8 +263,44 @@ export default function MedicijnLijstScreen() {
           }, 500);
           return;
         }
+
+        // 3. Voer de update uit met een vooraf berekend object
+        const updateStockLogic = async () => {
+          const updatedStock = Math.min(
+            MAX_STOCK_PER_MED,
+            selectedMed.stock + foundProduct.stockToAdd,
+          );
+
+          // Reset isOrdered op false zodra de voorraad >= 10 stuks is
+          const isStillOrdered =
+            updatedStock < 10 ? selectedMed.isOrdered : false;
+
+          const updatedItem: Medication = {
+            ...selectedMed,
+            stock: updatedStock,
+            isOrdered: isStillOrdered,
+            lastScannedAt: now,
+          };
+
+          // Update lokale state
+          setMeds((prevMeds) =>
+            prevMeds.map((m) => (m.id === selectedMed.id ? updatedItem : m)),
+          );
+          setSelectedMed(updatedItem);
+
+          // Stuur direct door naar Supabase database
+          await updateMedication(updatedItem);
+
+          playRobotAudio("scan_done");
+          showCustomSuccess(
+            "Gelukt!",
+            `Voorraad verhoogd met ${foundProduct.stockToAdd} stuks.`,
+          );
+        };
+
         updateStockLogic();
       } else {
+        // NIEUW MEDICIJN TOEVOEGEN VIA BARCODE
         const alreadyExists = meds.some(
           (m) => m.name.toLowerCase() === foundProduct.name.toLowerCase(),
         );

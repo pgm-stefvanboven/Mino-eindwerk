@@ -207,6 +207,7 @@ export default function VandaagScreen() {
     l.setDate(t.getDate() - 7);
     return selectedDate <= l;
   };
+
   const isTooFarFuture = () => {
     const t = new Date();
     t.setHours(0, 0, 0, 0);
@@ -215,7 +216,7 @@ export default function VandaagScreen() {
     return selectedDate >= l;
   };
 
-  // --- DATA LOADING & SYNCHRONISATIE ---
+  // 1. EERST: loadData declareren met useCallback
   const loadData = useCallback(async () => {
     setIsLoading(true);
 
@@ -295,6 +296,41 @@ export default function VandaagScreen() {
     setTasks(currentTasks);
     setIsLoading(false);
   }, [selectedDate]);
+
+  // 2. DAARNA PAS: Realtime listener die loadData gebruikt
+  useEffect(() => {
+    const channelName = `home-realtime-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase
+      .channel(channelName)
+      // Luister naar inname-logs
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "medication_logs" },
+        () => {
+          loadData();
+        },
+      )
+      // Luister direct naar wijzigingen in voorraad / isOrdered
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "medications" },
+        () => {
+          loadData();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
+
+  // Focus effect om opnieuw te laden bij schermwissel
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData]),
+  );
 
   useEffect(() => {
     const channelName = `tasks-realtime-${Math.random().toString(36).slice(2)}`;
