@@ -1,5 +1,5 @@
 import { Tabs, useRouter, usePathname } from "expo-router";
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View, Text, Platform } from "react-native";
 import { useRole } from "../../context/RoleContext";
@@ -9,7 +9,10 @@ import { supabase } from "../../lib/supabase";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 
-// Types die specifiek bestemd zijn voor de patiënt (buiten de component voor een vaste referentie)
+// Zelfde bron van waarheid als notifications.tsx — moet hiermee gelijk
+// blijven, anders telt deze badge meldingstypes mee die de lijst voor die
+// rol nooit toont (en dus ook nooit als gelezen kan markeren), wat een
+// permanente "spookbadge" veroorzaakt.
 const PATIENT_NOTIFICATION_TYPES = ["privacy", "reminder_5min"];
 
 export default function TabLayout() {
@@ -19,37 +22,13 @@ export default function TabLayout() {
 
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Keep the latest role in a ref so the realtime callback always reads the current role
+  // Keep the latest role in a ref so the realtime callback (set up once,
+  // see below) always reads the current role without us needing to tear
+  // down and recreate the channel every time role changes.
   const roleRef = useRef(role);
   useEffect(() => {
     roleRef.current = role;
   }, [role]);
-
-  // Haal aantal ongelezen meldingen op
-  const fetchUnreadCount = useCallback(async () => {
-    const currentRole = roleRef.current;
-
-    let query = supabase
-      .from("notifications")
-      .select("*", { count: "exact", head: true })
-      .eq("read", false);
-
-    if (currentRole === "patient") {
-      query = query.in("type", PATIENT_NOTIFICATION_TYPES);
-    } else if (currentRole === "mantelzorger") {
-      query = query.not(
-        "type",
-        "in",
-        `("${PATIENT_NOTIFICATION_TYPES.join('","')}")`
-      );
-    }
-
-    const { count, error } = await query;
-
-    if (!error && count !== null) {
-      setUnreadCount(count);
-    }
-  }, []);
 
   // --- REGISTREER GSM VOOR PUSH MELDINGEN ---
   useEffect(() => {
@@ -69,6 +48,22 @@ export default function TabLayout() {
       }
 
       try {
+        // BELANGRIJK (zie Expo-documentatie): op Android 13+ verschijnt de
+        // toestemmingsprompt pas nadat er minstens één notification channel
+        // bestaat. setNotificationChannelAsync moet dus VOOR
+        // getPermissionsAsync/requestPermissionsAsync en getExpoPushTokenAsync
+        // gebeuren — hiervoor stond dit helemaal op het einde, waardoor de
+        // prompt op Android 13+ mogelijk nooit verscheen en de hele
+        // registratie stil faalde.
+        if (Platform.OS === "android") {
+          await Notifications.setNotificationChannelAsync("default", {
+            name: "default",
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: "#00f0ff",
+          });
+        }
+
         const { status: existingStatus } =
           await Notifications.getPermissionsAsync();
         console.log("📊 Huidige toestemming status:", existingStatus);
@@ -109,15 +104,6 @@ export default function TabLayout() {
         } else {
           console.log("💾 Token succesvol opgeslagen in Supabase!");
         }
-
-        if (Platform.OS === "android") {
-          Notifications.setNotificationChannelAsync("default", {
-            name: "default",
-            importance: Notifications.AndroidImportance.MAX,
-            vibrationPattern: [0, 250, 250, 250],
-            lightColor: "#00f0ff",
-          });
-        }
       } catch (e) {
         console.error("❌ Er is een onverwachte fout opgetreden:", e);
       }
@@ -129,9 +115,22 @@ export default function TabLayout() {
   // Update de badge elke keer als je van of naar dit scherm navigeert, of als de rol wijzigt
   useEffect(() => {
     fetchUnreadCount();
-  }, [pathname, role, fetchUnreadCount]);
+  }, [pathname, role]);
 
   // REALTIME: Luister naar wijzigingen in de notificaties tabel.
+  // IMPORTANT: this effect now runs ONCE per real mount (deps: []).
+  // It used to depend on [role], which meant that every role switch (and
+  // every Expo Router "screen freeze/reconnect" when you left and came
+  // back to this tab) tore the channel down and immediately recreated one
+  // with the SAME name ("public:notifications"). supabase-js unsubscribes
+  // asynchronously, so the new channel() call would sometimes get handed
+  // back the still-being-removed old instance — which already had
+  // .subscribe() called on it — and .on() would throw:
+  // "cannot add `postgres_changes` callbacks ... after `subscribe()`".
+  //
+  // Fix: give every mount its own unique channel name so it can never
+  // collide with a channel that's still being torn down, and read role
+  // from roleRef so we don't need to recreate the channel at all.
   useEffect(() => {
     fetchUnreadCount();
 
@@ -151,7 +150,32 @@ export default function TabLayout() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchUnreadCount]);
+  }, []);
+
+  const fetchUnreadCount = async () => {
+    const currentRole = roleRef.current;
+
+    let query = supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .eq("read", false);
+
+    if (currentRole === "patient") {
+      query = query.in("type", PATIENT_NOTIFICATION_TYPES);
+    } else if (currentRole === "mantelzorger") {
+      query = query.not(
+        "type",
+        "in",
+        `("${PATIENT_NOTIFICATION_TYPES.join('","')}")`,
+      );
+    }
+
+    const { count, error } = await query;
+
+    if (!error && count !== null) {
+      setUnreadCount(count);
+    }
+  };
 
   return (
     <Tabs
@@ -169,6 +193,7 @@ export default function TabLayout() {
         headerTintColor: "white",
         headerTitleStyle: { fontWeight: "bold", letterSpacing: 1 },
 
+        // Settings button top right
         headerRight: () => (
           <>
             <Pressable
@@ -254,6 +279,7 @@ export default function TabLayout() {
         name="robot"
         options={{
           title: "CAMERA",
+          // PRIVACY-BY-DESIGN: Hide the tab completely from the patient.
           href: role === "patient" ? null : "/robot",
           tabBarIcon: ({ color }) => (
             <Ionicons name="videocam" size={24} color={color} />
