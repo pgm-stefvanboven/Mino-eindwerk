@@ -21,6 +21,9 @@ export type NotificationRouteInput = {
 const TYPE_ROUTES: Record<string, string> = {
   stock: "/medications",
   medication: "/medications",
+  // Aanpassingen aan het innamemoment zelf (tijd/verwijderen) horen bij het
+  // dagschema op het home-tabblad, niet bij het medicatiebeheerscherm.
+  schedule_change: "/",
   emergency: "/robot",
   battery: "/settings",
   // Privacy taps go to the home screen with a flag so it can show the

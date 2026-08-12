@@ -102,15 +102,12 @@ export default function VandaagScreen() {
     phone: "",
   });
 
-  // Reset het rode bolletje (badge) zodra dit scherm bekeken wordt — voor
-  // BEIDE rollen (was voorheen enkel voor de patiënt, waardoor de badge van
-  // de mantelzorger nooit werd teruggezet), en telkens opnieuw bij elk
-  // bezoek aan dit tabblad, niet enkel eenmalig bij het opstarten.
-  useFocusEffect(
-    useCallback(() => {
+  // Reset het rode bolletje (badge '1') zodra de patiënt het scherm bekijkt
+  useEffect(() => {
+    if (role === "patient") {
       Notifications.setBadgeCountAsync(0).catch(() => { });
-    }, []),
-  );
+    }
+  }, [role]);
 
   // Update klok elke seconde (zorgt voor live aftellen)
   useEffect(() => {
@@ -139,9 +136,14 @@ export default function VandaagScreen() {
 
     checkScheduleLock();
 
-    const channelName = `home-schedule-lock-${Math.random().toString(36).slice(2)}`;
+    // Zelfde vaste-naam-collision bug als eerder gefixt in tabs/_layout.tsx:
+    // een hardcoded channel-naam kan botsen met een oude instantie die nog
+    // aan het afmelden is (bv. bij snel wisselen van tabblad), wat een
+    // "cannot add postgres_changes callbacks ... after subscribe()" crash
+    // veroorzaakt. Elke mount krijgt daarom een unieke naam.
+    const lockChannelName = `home-schedule-lock-${Math.random().toString(36).slice(2)}`;
     const channel = supabase
-      .channel(channelName)
+      .channel(lockChannelName)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "shared_settings" },
@@ -347,7 +349,6 @@ export default function VandaagScreen() {
   }, [selectedDate]);
 
   // 2. REALTIME LISTENERS FOR DAILY_SCHEDULE, LOGS AND MEDICATIONS
-  // 2. REALTIME LISTENERS FOR DAILY_SCHEDULE, LOGS AND MEDICATIONS
   useEffect(() => {
     const channelName = `home-realtime-${Math.random().toString(36).slice(2)}`;
     const channel = supabase
@@ -469,6 +470,63 @@ export default function VandaagScreen() {
     return candidate.getTime() < new Date().getTime();
   };
 
+  // Gedeelde helper: schrijft de in-app melding weg EN stuurt een echte push
+  // naar het toestel van de mantelzorger. Gebruikt door zowel het aanpassen
+  // als het verwijderen van een innamemoment, zodat beide consistent
+  // gedrag hebben i.p.v. dat enkel de eerste een echte push kreeg.
+  const notifyCaregiverOfScheduleChange = async (
+    title: string,
+    body: string,
+  ) => {
+    // In-app record (badge, notificatielijst). Eigen type "schedule_change"
+    // i.p.v. "medication" — dat laatste routeert naar het voorraadscherm
+    // /medications, wat hier niet klopt: dit gaat over het innamemoment,
+    // niet over medicatiebeheer.
+    await supabase.from("notifications").insert([
+      {
+        title,
+        body,
+        type: "schedule_change",
+        read: false,
+      },
+    ]);
+
+    try {
+      const { data: settings, error: settingsError } = await supabase
+        .from("shared_settings")
+        .select("caregiver_push_token")
+        .eq("id", 1)
+        .single();
+
+      if (settingsError) {
+        console.error(
+          "Fout bij ophalen caregiver_push_token:",
+          settingsError,
+        );
+      }
+
+      if (settings?.caregiver_push_token) {
+        await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Accept-encoding": "gzip, deflate",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            to: settings.caregiver_push_token,
+            sound: "default",
+            title,
+            body,
+            data: { type: "schedule_change" },
+          }),
+        });
+      }
+    } catch (e) {
+      console.error("Fout bij versturen push naar mantelzorger:", e);
+    }
+  };
+
   const handleSaveTaskEdit = async () => {
     if (!editingTask) return;
 
@@ -517,17 +575,10 @@ export default function VandaagScreen() {
     // 2. Indien de patiënt het innametijdstip heeft gewijzigd: MELDING STUREN NAAR MANTELZORGER!
     if (isTimeChanged && role === "patient") {
       const cleanMedName = editingTask.name.replace(/^[0-9]+x\s*/, "");
-      const title = "⏰ Innamemoment gewijzigd";
-      const body = `De patiënt heeft het innametijdstip van ${cleanMedName} aangepast van ${oldTime} naar ${editTime}.`;
-
-      await supabase.from("notifications").insert([
-        {
-          title,
-          body,
-          type: "medication",
-          read: false,
-        },
-      ]);
+      await notifyCaregiverOfScheduleChange(
+        "⏰ Innamemoment gewijzigd",
+        `De patiënt heeft het innametijdstip van ${cleanMedName} aangepast van ${oldTime} naar ${editTime}.`,
+      );
     }
 
     setIsEditingSchedule(false);
@@ -550,14 +601,10 @@ export default function VandaagScreen() {
             await deleteScheduleItem(editingTask.id);
 
             if (role === "patient") {
-              await supabase.from("notifications").insert([
-                {
-                  title: "🗑️ Innamemoment verwijderd",
-                  body: `De patiënt heeft het innamemoment om ${editingTask.time} voor ${editingTask.name} verwijderd.`,
-                  type: "medication",
-                  read: false,
-                },
-              ]);
+              await notifyCaregiverOfScheduleChange(
+                "🗑️ Innamemoment verwijderd",
+                `De patiënt heeft het innamemoment om ${editingTask.time} voor ${editingTask.name} verwijderd.`,
+              );
             }
 
             setEditingTask(null);

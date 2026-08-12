@@ -226,6 +226,12 @@ export default function NotificationsScreen() {
         };
       case "medication":
         return { iconName: "medkit", iconColor: "#3b82f6", title: "Medicatie" };
+      case "schedule_change":
+        return {
+          iconName: "time-outline",
+          iconColor: "#60a5fa",
+          title: "Innamemoment Aangepast",
+        };
       case "battery":
         return {
           iconName: "battery-dead",
