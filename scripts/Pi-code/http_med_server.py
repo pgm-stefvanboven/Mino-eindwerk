@@ -147,9 +147,15 @@ def proxy_video_stream():
 
 
 # --- ACHTERGROND MONITOR ---
+# --- GEHEUGEN VOOR ESCALATIE (voorkomt spam) ---
+CRITICAL_STOCK_NOTIFIED = set()
+
+# --- ACHTERGROND MONITOR ---
 def monitor_loop():
-    global BATTERY_WARNING_GIVEN, LAST_BATTERY_PERCENTAGE
+    global BATTERY_WARNING_GIVEN, LAST_BATTERY_PERCENTAGE, CRITICAL_STOCK_NOTIFIED
     print("--- MONITOR ACTIEF: Wacht op triggers ---")
+
+    last_stock_check = datetime.datetime.min
 
     while True:
         now = datetime.datetime.now()
@@ -157,11 +163,8 @@ def monitor_loop():
         # 1. BATTERY WARNING
         if LAST_BATTERY_PERCENTAGE <= 15 and not BATTERY_WARNING_GIVEN:
             print("Batterij is laag, speel melding af.")
-
-            # Lokale audio op de robot zelf (hoorbaar in huis bij de patiënt)
             speak("Battery.mp3")
 
-            # Melding + push naar de mantelzorger (dit ontbrak volledig)
             title = "Batterij bijna leeg"
             body = f"De batterij van Mino staat op {LAST_BATTERY_PERCENTAGE}% en moet opgeladen worden."
             save_notification(title, body, "battery")
@@ -169,33 +172,72 @@ def monitor_loop():
 
             BATTERY_WARNING_GIVEN = True
         elif LAST_BATTERY_PERCENTAGE > 20:
-            # Reset it once it's fully charged
             BATTERY_WARNING_GIVEN = False
 
-        # 2. REMINDER: REORDER
+        # 2. AUTONOOM VANGNET / VOORRAAD ESCALATIE (Elk uur controleren)
+        if (now - last_stock_check).total_seconds() > 3600:
+            last_stock_check = now
+            try:
+                # Haal medicijnen op met lage voorraad (< 10) die nog niet door de patiënt zijn besteld
+                meds_res = supabase.table("medications").select("*").lt("stock", 10).eq("isOrdered", False).execute()
+                schedule_res = supabase.table("daily_schedule").select("*").execute()
+
+                if meds_res.data and schedule_res.data:
+                    schedule_items = schedule_res.data
+                    for med in meds_res.data:
+                        med_id = str(med.get("id"))
+                        stock = med.get("stock", 0)
+
+                        # Bereken dagelijks verbruik
+                        daily_needed = sum(
+                            int(''.join(filter(str.isdigit, str(item.get("amount", "1")))) or 1)
+                            for item in schedule_items if str(item.get("medId")) == med_id
+                        ) or 1
+
+                        days_left = stock // daily_needed
+
+                        # ESCALATIE: Voorraad is kritiek (<= 2 dagen) en patiënt heeft nog niet zelf gedrukt
+                        if days_left <= 2 and med_id not in CRITICAL_STOCK_NOTIFIED:
+                            print(f"[VANGNET ESCALATIE] Voorraad van {med['name']} is kritiek ({days_left} dagen over).")
+                            
+                            # Robot audio & LED waarschuwing
+                            speak("Inventory.mp3")
+                            if led and led.Ledsupported:
+                                for _ in range(3):
+                                    led.strip.set_all_led_color(255, 100, 0)
+                                    time.sleep(0.3)
+                                    led.strip.set_all_led_color(0, 0, 0)
+                                    time.sleep(0.2)
+
+                            # Push naar mantelzorger
+                            title = f"⚠️ Vangnet: {med['name']} bijna op"
+                            body = f"Mino meldt: er is nog voorraad voor ca. {days_left} dag(en). Patiënt heeft nog niet gereageerd."
+                            save_notification(title, body, "stock")
+                            send_push_notification(title, body, "stock")
+
+                            CRITICAL_STOCK_NOTIFIED.add(med_id)
+                        elif stock >= 10 and med_id in CRITICAL_STOCK_NOTIFIED:
+                            CRITICAL_STOCK_NOTIFIED.remove(med_id)
+
+            except Exception as err:
+                print(f"Fout bij automatische voorraadcontrole: {err}")
+
+        # 3. REMINDER: REORDER (Bestaande demo timer)
         if RESTOCK_STATE["active"] and RESTOCK_STATE["deadline"]:
             if now > RESTOCK_STATE["deadline"]:
                 print("HERINNERING: Opa is vergeten te bestellen! Mino wordt Goud.")
                 speak("Medication-reminder.mp3")
 
-                # LED EFFECT
                 if led and led.Ledsupported:
-
-                    # Fade in goud/geel
                     for i in range(0, 150, 5):
                         led.strip.set_all_led_color(i, int(i * 0.6), 0)
                         time.sleep(0.05)
-
                     time.sleep(1)
-
-                    # Fade out
                     for i in range(150, 0, -5):
                         led.strip.set_all_led_color(i, int(i * 0.6), 0)
                         time.sleep(0.05)
-
                 else:
                     time.sleep(2)
-
         else:
             time.sleep(1)
 
@@ -204,18 +246,17 @@ def monitor_loop():
 threading.Thread(target=monitor_loop, daemon=True).start()
 
 def get_caregiver_token():
-
     response = (
         supabase
-        .table("caregiver_devices")
-        .select("expo_push_token")
-        .order("id", desc=True)
-        .limit(1)
+        .table("shared_settings")
+        .select("caregiver_push_token")
+        .eq("id", 1)
+        .single()
         .execute()
     )
 
     if response.data:
-        return response.data[0]["expo_push_token"]
+        return response.data.get("caregiver_push_token")
 
     return None
 
