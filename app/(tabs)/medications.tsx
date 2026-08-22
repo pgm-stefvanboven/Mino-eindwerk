@@ -49,7 +49,7 @@ const playRobotAudio = async (endpoint: string) => {
   }
 };
 
-const ROBOT_API = "http://10.178.148.75:5001";
+const ROBOT_API = "http://172.31.149.75:5001";
 
 // --- SYSTEM LIMITS ---
 const MAX_STOCK_PER_MED = 500;

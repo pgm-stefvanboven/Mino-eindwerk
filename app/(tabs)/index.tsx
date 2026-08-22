@@ -971,9 +971,16 @@ export default function VandaagScreen() {
                   <View style={{ marginTop: 12 }}>
                     {lowStockMeds.map((med) => {
                       const isReported = med.isOrdered === true;
-                      const timesPerDay =
-                        tasks.filter((t) => t.medId === med.id).length || 1;
-                      const daysLeft = Math.floor(med.stock / timesPerDay);
+                      const dailyNeededAmount = tasks
+                        .filter((t) => t.medId === med.id)
+                        .reduce((sum, t) => {
+                          const parsedAmount = parseInt(t.amount.replace(/[^0-9]/g, ""), 10);
+                          return sum + (isNaN(parsedAmount) || parsedAmount <= 0 ? 1 : parsedAmount);
+                        }, 0) || 1;
+
+                      const daysLeft = Math.floor(med.stock / dailyNeededAmount);
+                      // Dynamisch enkelvoud/meervoud
+                      const daysText = daysLeft === 1 ? "1 dag" : `${daysLeft} dagen`;
 
                       const chipBorderColor = isReported
                         ? isMantelzorger
@@ -988,8 +995,8 @@ export default function VandaagScreen() {
                           onPress={() => router.push("/medications")}
                           style={{
                             backgroundColor: "rgba(0,0,0,0.3)",
-                            paddingHorizontal: 16,
-                            paddingVertical: 14,
+                            paddingHorizontal: 14,
+                            paddingVertical: 12,
                             borderRadius: 12,
                             borderWidth: 1,
                             borderColor: chipBorderColor,
@@ -997,15 +1004,25 @@ export default function VandaagScreen() {
                             justifyContent: "space-between",
                             alignItems: "center",
                             marginBottom: 8,
+                            gap: 8,
                           }}
                         >
-                          <Text style={styles.stockChipName}>{med.name}</Text>
+                          {/* Linkerkant: Medicijnnaam (krimpt netjes bij lange namen) */}
+                          <Text
+                            style={[styles.stockChipName, { flex: 1 }]}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                          >
+                            {med.name}
+                          </Text>
 
+                          {/* Rechterkant: Status + chevron (breekt nooit af naar nieuwe regel) */}
                           <View
                             style={{
                               flexDirection: "row",
                               alignItems: "center",
-                              gap: 10,
+                              gap: 8,
+                              flexShrink: 0,
                             }}
                           >
                             {isReported ? (
@@ -1013,41 +1030,34 @@ export default function VandaagScreen() {
                                 style={{
                                   flexDirection: "row",
                                   alignItems: "center",
-                                  gap: 6,
+                                  gap: 5,
                                 }}
                               >
                                 <Text
                                   style={{
-                                    color: isMantelzorger
-                                      ? "#ef4444"
-                                      : "#60a5fa",
+                                    color: isMantelzorger ? "#ef4444" : "#60a5fa",
                                     fontWeight: "bold",
-                                    fontSize: 12,
+                                    fontSize: 11,
+                                    letterSpacing: 0.3,
                                   }}
                                 >
-                                  {isMantelzorger
-                                    ? "AANKOPEN BIJ APOTHEEK"
-                                    : "REEDS GEMELD"}
+                                  {isMantelzorger ? "AANKOPEN" : "REEDS GEMELD"}
                                 </Text>
                                 <Ionicons
-                                  name={
-                                    isMantelzorger
-                                      ? "alert-circle"
-                                      : "checkmark-circle"
-                                  }
-                                  size={16}
+                                  name={isMantelzorger ? "alert-circle" : "checkmark-circle"}
+                                  size={15}
                                   color={isMantelzorger ? "#ef4444" : "#60a5fa"}
                                 />
                               </View>
                             ) : (
                               <Text style={styles.stockChipCount}>
-                                Nog {med.stock} stuks (ca. {daysLeft} dgn)
+                                Nog {med.stock} stuks (ca. {daysText})
                               </Text>
                             )}
 
                             <Ionicons
                               name="chevron-forward"
-                              size={18}
+                              size={16}
                               color="rgba(255,255,255,0.3)"
                             />
                           </View>

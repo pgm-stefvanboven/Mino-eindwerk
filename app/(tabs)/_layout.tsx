@@ -33,28 +33,10 @@ export default function TabLayout() {
   // --- REGISTREER GSM VOOR PUSH MELDINGEN ---
   useEffect(() => {
     async function registerForPushNotificationsAsync() {
-      console.log("🛠️ Push Check gestart. Huidige rol is:", role);
-
-      if (role !== "mantelzorger") {
-        console.log("🛑 Gestopt: Gebruiker is geen mantelzorger.");
-        return;
-      }
-
-      if (!Device.isDevice) {
-        console.log(
-          "🛑 Gestopt: Push notificaties vereisen een fysiek toestel.",
-        );
-        return;
-      }
+      if (!Device.isDevice) return;
 
       try {
-        // BELANGRIJK (zie Expo-documentatie): op Android 13+ verschijnt de
-        // toestemmingsprompt pas nadat er minstens één notification channel
-        // bestaat. setNotificationChannelAsync moet dus VOOR
-        // getPermissionsAsync/requestPermissionsAsync en getExpoPushTokenAsync
-        // gebeuren — hiervoor stond dit helemaal op het einde, waardoor de
-        // prompt op Android 13+ mogelijk nooit verscheen en de hele
-        // registratie stil faalde.
+        // 1. ALTIJD KANAAL MAKEN (essentieel voor Android 13+ / One UI 8.5)
         if (Platform.OS === "android") {
           await Notifications.setNotificationChannelAsync("default", {
             name: "default",
@@ -64,48 +46,37 @@ export default function TabLayout() {
           });
         }
 
-        const { status: existingStatus } =
-          await Notifications.getPermissionsAsync();
-        console.log("📊 Huidige toestemming status:", existingStatus);
+        // 2. Toestemming vragen
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
-
         if (existingStatus !== "granted") {
-          console.log("👀 Toestemming vragen aan de gebruiker...");
           const { status } = await Notifications.requestPermissionsAsync();
           finalStatus = status;
         }
+        if (finalStatus !== "granted") return;
 
-        if (finalStatus !== "granted") {
-          console.log("🛑 Gestopt: Gebruiker heeft toestemming geweigerd!");
-          return;
-        }
-
-        console.log("✅ Toestemming is in orde! Token ophalen...");
-
+        // 3. Token ophalen
         const tokenData = await Notifications.getExpoPushTokenAsync({
           projectId: "4137b61f-247e-4811-aea5-a53fc50ba7d7",
-        }).catch((err) => {
-          console.error("❌ Fout bij ophalen Expo token:", err);
-          return null;
-        });
+        }).catch(() => null);
 
         if (!tokenData) return;
-
         const token = tokenData.data;
-        console.log("🚀 Nieuwe Push Token gegenereerd:", token);
 
-        const { error } = await supabase
-          .from("shared_settings")
-          .update({ caregiver_push_token: token })
-          .eq("id", 1);
-
-        if (error) {
-          console.error("❌ Fout bij opslaan push token in Supabase:", error);
-        } else {
-          console.log("💾 Token succesvol opgeslagen in Supabase!");
+        // 4. Token opslaan op basis van rol
+        if (role === "mantelzorger") {
+          await supabase
+            .from("shared_settings")
+            .update({ caregiver_push_token: token })
+            .eq("id", 1);
+        } else if (role === "patient") {
+          await supabase
+            .from("shared_settings")
+            .update({ patient_push_token: token }) // of je devices tabel
+            .eq("id", 1);
         }
       } catch (e) {
-        console.error("❌ Er is een onverwachte fout opgetreden:", e);
+        console.error("Fout bij push registratie:", e);
       }
     }
 
