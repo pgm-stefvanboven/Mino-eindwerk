@@ -84,6 +84,7 @@ export default function VandaagScreen() {
   const [lowStockMeds, setLowStockMeds] = useState<Medication[]>([]);
   const [takingMedication, setTakingMedication] = useState<number | null>(null);
   const [emergencyActive, setEmergencyActive] = useState(false);
+  const [demoMissedCount, setDemoMissedCount] = useState<number>(0);
   const [alarmStage, setAlarmStage] = useState<
     "idle" | "reminder" | "waiting" | "emergency"
   >("idle");
@@ -835,30 +836,26 @@ export default function VandaagScreen() {
 
   const startDemoScenario = async () => {
     setShowDemoModal(true);
-    setAlarmStage("reminder");
 
-    await fetch("http://172.31.149.75:5001/start_reminder", {
-      method: "POST",
-    });
-
-    setTimeout(async () => {
-      setAlarmStage("waiting");
-
-      await fetch("http://172.31.149.75:5001/second_reminder", {
+    try {
+      const res = await fetch(`${ROBOT_API_URL}/start_demo_scenario`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
       });
-    }, 5000);
+      const data = await res.json();
 
-    setTimeout(async () => {
-      setAlarmStage("emergency");
-      setEmergencyActive(true);
-
-      await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
-
-      await fetch("http://172.31.149.75:5001/care_emergency", {
-        method: "POST",
-      });
-    }, 10000);
+      if (data.stage === "warning") {
+        setDemoMissedCount(1);
+        setAlarmStage("waiting"); // Toont oranje status op het dashboard
+      } else if (data.stage === "emergency") {
+        setDemoMissedCount(2);
+        setAlarmStage("emergency"); // Toont rood escalatieblok
+        setEmergencyActive(true);
+        await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
+      }
+    } catch (error) {
+      console.error("Fout bij starten scenario:", error);
+    }
   };
 
   const formatDateDisplay = (date: Date) => {
@@ -1452,16 +1449,34 @@ export default function VandaagScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <View style={styles.modalIconCircle}>
-              <Ionicons name="notifications" size={32} color="#fff" />
+            <View
+              style={[
+                styles.modalIconCircle,
+                { backgroundColor: demoMissedCount === 2 ? "#ef4444" : "#f59e0b" },
+              ]}
+            >
+              <Ionicons
+                name={demoMissedCount === 2 ? "alert-circle" : "time"}
+                size={32}
+                color="#fff"
+              />
             </View>
-            <Text style={styles.modalTitle}>Demo Gestart</Text>
-            <Text style={styles.modalText}>Robot start alarm...</Text>
+            <Text style={styles.modalTitle}>
+              {demoMissedCount === 2 ? "Escalatie: 2e Moment Gemist" : "1e Moment Gemist"}
+            </Text>
+            <Text style={styles.modalText}>
+              {demoMissedCount === 2
+                ? "Drempelwaarde overschreden: mantelzorger is gealarmeerd en de camera is ontgrendeld."
+                : "Discreet gelogd: Mino waarschuwt lokaal, maar stoort de mantelzorger nog niet."}
+            </Text>
             <TouchableOpacity
-              style={styles.modalButton}
+              style={[
+                styles.modalButton,
+                { backgroundColor: demoMissedCount === 2 ? "#ef4444" : "#007AFF" },
+              ]}
               onPress={() => setShowDemoModal(false)}
             >
-              <Text style={styles.modalButtonText}>OK</Text>
+              <Text style={styles.modalButtonText}>BEGREPEN</Text>
             </TouchableOpacity>
           </View>
         </View>

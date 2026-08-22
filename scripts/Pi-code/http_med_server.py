@@ -22,7 +22,6 @@ CMD_PORT = 5000
 VIDEO_PORT = 8000
 
 SUPABASE_URL = "https://euechlwdifknegdoxxfg.supabase.co"
-
 SUPABASE_KEY = "sb_publishable_z1dskcmLu-LaAeZJiJXxuQ_QHyonFPX"
 
 supabase = create_client(
@@ -45,6 +44,10 @@ RESTOCK_STATE = {
 
 LAST_BATTERY_PERCENTAGE = 100
 BATTERY_WARNING_GIVEN = False
+
+# Tracker voor getrapte zorgscenario's
+DEMO_SIMULATED_MISSES = 0
+CRITICAL_STOCK_NOTIFIED = set()
 
 # --- LED INITIALISATIE ---
 try:
@@ -146,105 +149,7 @@ def proxy_video_stream():
                 pass
 
 
-# --- ACHTERGROND MONITOR ---
-# --- GEHEUGEN VOOR ESCALATIE (voorkomt spam) ---
-CRITICAL_STOCK_NOTIFIED = set()
-
-# --- ACHTERGROND MONITOR ---
-def monitor_loop():
-    global BATTERY_WARNING_GIVEN, LAST_BATTERY_PERCENTAGE, CRITICAL_STOCK_NOTIFIED
-    print("--- MONITOR ACTIEF: Wacht op triggers ---")
-
-    last_stock_check = datetime.datetime.min
-
-    while True:
-        now = datetime.datetime.now()
-        
-        # 1. BATTERY WARNING
-        if LAST_BATTERY_PERCENTAGE <= 15 and not BATTERY_WARNING_GIVEN:
-            print("Batterij is laag, speel melding af.")
-            speak("Battery.mp3")
-
-            title = "Batterij bijna leeg"
-            body = f"De batterij van Mino staat op {LAST_BATTERY_PERCENTAGE}% en moet opgeladen worden."
-            save_notification(title, body, "battery")
-            send_push_notification(title, body, "battery")
-
-            BATTERY_WARNING_GIVEN = True
-        elif LAST_BATTERY_PERCENTAGE > 20:
-            BATTERY_WARNING_GIVEN = False
-
-        # 2. AUTONOOM VANGNET / VOORRAAD ESCALATIE (Elk uur controleren)
-        if (now - last_stock_check).total_seconds() > 3600:
-            last_stock_check = now
-            try:
-                # Haal medicijnen op met lage voorraad (< 10) die nog niet door de patiënt zijn besteld
-                meds_res = supabase.table("medications").select("*").lt("stock", 10).eq("isOrdered", False).execute()
-                schedule_res = supabase.table("daily_schedule").select("*").execute()
-
-                if meds_res.data and schedule_res.data:
-                    schedule_items = schedule_res.data
-                    for med in meds_res.data:
-                        med_id = str(med.get("id"))
-                        stock = med.get("stock", 0)
-
-                        # Bereken dagelijks verbruik
-                        daily_needed = sum(
-                            int(''.join(filter(str.isdigit, str(item.get("amount", "1")))) or 1)
-                            for item in schedule_items if str(item.get("medId")) == med_id
-                        ) or 1
-
-                        days_left = stock // daily_needed
-
-                        # ESCALATIE: Voorraad is kritiek (<= 2 dagen) en patiënt heeft nog niet zelf gedrukt
-                        if days_left <= 2 and med_id not in CRITICAL_STOCK_NOTIFIED:
-                            print(f"[VANGNET ESCALATIE] Voorraad van {med['name']} is kritiek ({days_left} dagen over).")
-                            
-                            # Robot audio & LED waarschuwing
-                            speak("Inventory.mp3")
-                            if led and led.Ledsupported:
-                                for _ in range(3):
-                                    led.strip.set_all_led_color(255, 100, 0)
-                                    time.sleep(0.3)
-                                    led.strip.set_all_led_color(0, 0, 0)
-                                    time.sleep(0.2)
-
-                            # Push naar mantelzorger
-                            title = f"⚠️ Vangnet: {med['name']} bijna op"
-                            body = f"Mino meldt: er is nog voorraad voor ca. {days_left} dag(en). Patiënt heeft nog niet gereageerd."
-                            save_notification(title, body, "stock")
-                            send_push_notification(title, body, "stock")
-
-                            CRITICAL_STOCK_NOTIFIED.add(med_id)
-                        elif stock >= 10 and med_id in CRITICAL_STOCK_NOTIFIED:
-                            CRITICAL_STOCK_NOTIFIED.remove(med_id)
-
-            except Exception as err:
-                print(f"Fout bij automatische voorraadcontrole: {err}")
-
-        # 3. REMINDER: REORDER (Bestaande demo timer)
-        if RESTOCK_STATE["active"] and RESTOCK_STATE["deadline"]:
-            if now > RESTOCK_STATE["deadline"]:
-                print("HERINNERING: Opa is vergeten te bestellen! Mino wordt Goud.")
-                speak("Medication-reminder.mp3")
-
-                if led and led.Ledsupported:
-                    for i in range(0, 150, 5):
-                        led.strip.set_all_led_color(i, int(i * 0.6), 0)
-                        time.sleep(0.05)
-                    time.sleep(1)
-                    for i in range(150, 0, -5):
-                        led.strip.set_all_led_color(i, int(i * 0.6), 0)
-                        time.sleep(0.05)
-                else:
-                    time.sleep(2)
-        else:
-            time.sleep(1)
-
-
-# Start achtergrond monitor
-threading.Thread(target=monitor_loop, daemon=True).start()
-
+# --- PUSH & DATABASE HELPERS ---
 def get_caregiver_token():
     response = (
         supabase
@@ -260,8 +165,8 @@ def get_caregiver_token():
 
     return None
 
-def send_push_notification(title, body, notification_type=None):
 
+def send_push_notification(title, body, notification_type=None):
     token = get_caregiver_token()
 
     if not token:
@@ -297,8 +202,8 @@ def send_push_notification(title, body, notification_type=None):
         print("Push notificatie mislukt:", e)
         return False
 
-def save_notification(title, body, notification_type="emergency"):
 
+def save_notification(title, body, notification_type="emergency"):
     response = (
         supabase
         .table("notifications")
@@ -312,6 +217,114 @@ def save_notification(title, body, notification_type="emergency"):
 
     return response
 
+
+def trigger_escalation_protocol():
+    """Autonoom Noodprotocol: activeert audio, rood LED-licht, ontgrendelt camera en stuurt push."""
+    print("🚨 NOODPROTOCOL: Escalatiedrempel bereikt (2 gemiste momenten).")
+    
+    play_with_led("Emergency.mp3", 255, 0, 0)
+    
+    title = "⚠️ Meerdere medicatiemomenten gemist"
+    body = "Mino heeft 2 innames niet geregistreerd. Cameratoegang is tijdelijk ontgrendeld ter controle."
+    save_notification(title, body, "emergency")
+    send_push_notification(title, body, "emergency")
+    
+    save_notification("Camera actief", "Mantelzorger werd verwittigd wegens herhaaldelijk gemiste medicatie.", "privacy")
+    
+    supabase.table("shared_settings").update({"emergency_camera_unlocked": True}).eq("id", 1).execute()
+
+
+# --- ACHTERGROND MONITOR ---
+def monitor_loop():
+    global BATTERY_WARNING_GIVEN, LAST_BATTERY_PERCENTAGE, CRITICAL_STOCK_NOTIFIED
+    print("--- MONITOR ACTIEF: Wacht op triggers ---")
+
+    last_stock_check = datetime.datetime.min
+
+    while True:
+        now = datetime.datetime.now()
+        
+        # 1. BATTERY WARNING
+        if LAST_BATTERY_PERCENTAGE <= 15 and not BATTERY_WARNING_GIVEN:
+            print("Batterij is laag, speel melding af.")
+            speak("Battery.mp3")
+
+            title = "Batterij bijna leeg"
+            body = f"De batterij van Mino staat op {LAST_BATTERY_PERCENTAGE}% en moet opgeladen worden."
+            save_notification(title, body, "battery")
+            send_push_notification(title, body, "battery")
+
+            BATTERY_WARNING_GIVEN = True
+        elif LAST_BATTERY_PERCENTAGE > 20:
+            BATTERY_WARNING_GIVEN = False
+
+        # 2. AUTONOOM VANGNET / VOORRAAD ESCALATIE (Elk uur controleren)
+        if (now - last_stock_check).total_seconds() > 3600:
+            last_stock_check = now
+            try:
+                meds_res = supabase.table("medications").select("*").lt("stock", 10).eq("isOrdered", False).execute()
+                schedule_res = supabase.table("daily_schedule").select("*").execute()
+
+                if meds_res.data and schedule_res.data:
+                    schedule_items = schedule_res.data
+                    for med in meds_res.data:
+                        med_id = str(med.get("id"))
+                        stock = med.get("stock", 0)
+
+                        daily_needed = sum(
+                            int(''.join(filter(str.isdigit, str(item.get("amount", "1")))) or 1)
+                            for item in schedule_items if str(item.get("medId")) == med_id
+                        ) or 1
+
+                        days_left = stock // daily_needed
+
+                        if days_left <= 2 and med_id not in CRITICAL_STOCK_NOTIFIED:
+                            print(f"[VANGNET ESCALATIE] Voorraad van {med['name']} is kritiek ({days_left} dagen over).")
+                            
+                            speak("Inventory.mp3")
+                            if led and led.Ledsupported:
+                                for _ in range(3):
+                                    led.strip.set_all_led_color(255, 100, 0)
+                                    time.sleep(0.3)
+                                    led.strip.set_all_led_color(0, 0, 0)
+                                    time.sleep(0.2)
+
+                            title = f"⚠️ Vangnet: {med['name']} bijna op"
+                            body = f"Mino meldt: er is nog voorraad voor ca. {days_left} dag(en). Patiënt heeft nog niet gereageerd."
+                            save_notification(title, body, "stock")
+                            send_push_notification(title, body, "stock")
+
+                            CRITICAL_STOCK_NOTIFIED.add(med_id)
+                        elif stock >= 10 and med_id in CRITICAL_STOCK_NOTIFIED:
+                            CRITICAL_STOCK_NOTIFIED.remove(med_id)
+
+            except Exception as err:
+                print(f"Fout bij automatische voorraadcontrole: {err}")
+
+        # 3. REMINDER: REORDER (Bestaande demo timer)
+        if RESTOCK_STATE["active"] and RESTOCK_STATE["deadline"]:
+            if now > RESTOCK_STATE["deadline"]:
+                print("HERINNERING: Opa is vergeten te bestellen! Mino wordt Goud.")
+                speak("Medication-reminder.mp3")
+
+                if led and led.Ledsupported:
+                    for i in range(0, 150, 5):
+                        led.strip.set_all_led_color(i, int(i * 0.6), 0)
+                        time.sleep(0.05)
+                    time.sleep(1)
+                    for i in range(150, 0, -5):
+                        led.strip.set_all_led_color(i, int(i * 0.6), 0)
+                        time.sleep(0.05)
+                else:
+                    time.sleep(2)
+        else:
+            time.sleep(1)
+
+
+# Start achtergrond monitor
+threading.Thread(target=monitor_loop, daemon=True).start()
+
+
 # =========================================================
 # API ENDPOINTS
 # =========================================================
@@ -322,11 +335,11 @@ def set_volume():
     volume = data.get('volume', 50) 
     
     try:
-        # Past het volume aan via ALSA
         subprocess.run(['amixer', '-c', '2', 'sset', 'PCM', f'{volume}%'], check=True)
         return jsonify({"status": "success", "volume": volume})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 def play_with_led(audio_file, r, g, b):
     audio = threading.Thread(
@@ -347,57 +360,52 @@ def play_with_led(audio_file, r, g, b):
 
     audio.join()
 
+
+@app.post("/start_demo_scenario")
+def start_demo_scenario():
+    """Simuleert het getrapte zorgscenario voor presentaties"""
+    global DEMO_SIMULATED_MISSES
+    DEMO_SIMULATED_MISSES += 1
+
+    if DEMO_SIMULATED_MISSES == 1:
+        print("🎬 PRESENTATIE: 1e inname gemist. Zachte herinnering.")
+        play_with_led("Medication-reminder.mp3", 255, 120, 0)
+        return jsonify({
+            "stage": "warning", 
+            "missed_count": 1,
+            "message": "1e moment gemist: lokaal gesignaleerd, mantelzorger niet gestoord."
+        })
+    else:
+        print("🎬 PRESENTATIE: 2e inname gemist. Drempel bereikt -> Noodscenario.")
+        DEMO_SIMULATED_MISSES = 0
+        trigger_escalation_protocol()
+        return jsonify({
+            "stage": "emergency", 
+            "missed_count": 2,
+            "message": "Escalatiedrempel bereikt: mantelzorger verwittigd en camera geopend."
+        })
+
+
 @app.post("/start_reminder")
 def start_reminder():
-
     print("EERSTE HERINNERING")
-
-    play_with_led(
-        "Medication-time.mp3",
-        0,
-        80,
-        255,
-    )
-
+    play_with_led("Medication-time.mp3", 0, 80, 255)
     return jsonify({"status": "ok"})
+
 
 @app.post("/second_reminder")
 def second_reminder():
-
     print("TWEEDE HERINNERING")
-
-    play_with_led(
-        "Medication-reminder.mp3",
-        255,
-        120,
-        0,
-    )
-
+    play_with_led("Medication-reminder.mp3", 255, 120, 0)
     return jsonify({"status": "ok"})
+
 
 @app.post("/care_emergency")
 def care_emergency():
-
     print("NOODSITUATIE")
-
-    play_with_led(
-        "Emergency.mp3",
-        255,
-        0,
-        0,
-    )
-
-    title = "Mino"
-    body = "Geen reactie op de medicatieherinnering. Controleer de gebruiker."
-    save_notification(title, body)
-    send_push_notification(title, body)
-
-# 2. Transparantiemelding voor de patiënt in de database
-    title_patient = "Camera actief"
-    body_patient = "Mantelzorger werd verwittigd en kijkt tijdelijk mee via de camera."
-    save_notification(title_patient, body_patient, "privacy")
-
+    trigger_escalation_protocol()
     return jsonify({"status": "ok"})
+
 
 @app.get("/health")
 def health():
@@ -406,20 +414,15 @@ def health():
         "robot_ip": ROBOT_IP
     })
 
+
 @app.get("/battery")
 def battery():
-
     global LAST_BATTERY_PERCENTAGE
 
     raw = round(adc.recvADC(2), 2)
-
-    percentage = round(
-        ((raw - 1.10) / (1.42 - 1.10)) * 100
-    )
-
+    percentage = round(((raw - 1.10) / (1.42 - 1.10)) * 100)
     percentage = max(0, min(100, percentage))
 
-    # batterij mag enkel dalen
     if percentage < LAST_BATTERY_PERCENTAGE:
         LAST_BATTERY_PERCENTAGE = percentage
 
@@ -427,6 +430,7 @@ def battery():
         "raw": raw,
         "percentage": LAST_BATTERY_PERCENTAGE
     })
+
 
 @app.get("/video_feed")
 def video_feed():
@@ -442,7 +446,6 @@ def video_feed():
 
 @app.get("/medicijnen")
 def get_meds():
-
     return jsonify([
         {
             "id": 1,
@@ -458,9 +461,9 @@ def get_meds():
         },
     ])
 
+
 @app.post("/lock_open")
 def lock_open():
-    # Check whether the command was successful
     success = send_cmd("CMD_LOCK#110")
     if not success:
         print("Technisch probleem: motor reageert niet.")
@@ -469,9 +472,9 @@ def lock_open():
         
     return jsonify({"status": "open"})
 
+
 @app.post("/lock_close")
 def lock_close():
-    # Check whether the command was successful
     success = send_cmd("CMD_LOCK#20")
     if not success:
         print("Technisch probleem: motor reageert niet.")
@@ -479,28 +482,26 @@ def lock_close():
         return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "closed"})
+
+
 # =========================================================
 # MEDICATIE BEVESTIGING
 # =========================================================
 
 @app.post("/medicijnen/<int:id>/bevestig")
 def confirm_med(id):
-
     print(f"Medicatie bevestigd: {id}")
 
-    # SLOT DICHT
     success = send_cmd("CMD_LOCK#20")
     if not success:
         print("Technisch probleem: motor reageert niet.")
         speak("Technical-problem.mp3")
         return jsonify({"status": "error"}), 500
 
-    # AUDIO FEEDBACK
     speak("Medication-done.mp3")
 
-    return jsonify({
-        "status": "success"
-    })
+    return jsonify({"status": "success"})
+
 
 # =========================================================
 # SCAN MEDICATION AUDIO FEEDBACK
@@ -508,33 +509,31 @@ def confirm_med(id):
 
 @app.post("/audio/scan_medication")
 def audio_scan_medication():
-    """Instructie afspelen wanneer de scanner/camera wordt gestart"""
     print("Audio: Scan medicijn instructie")
     speak("Scan-medication.mp3")
     return jsonify({"status": "ok"})
 
+
 @app.post("/audio/scan_done")
 def audio_scan_done():
-    """Geluid bij een succesvol gescande barcode"""
     print("Audio: Scan gelukt")
     speak("Scan-done.mp3")
     return jsonify({"status": "ok"})
 
+
 @app.post("/audio/scan_wrong")
 def audio_scan_wrong():
-    """Geluid bij een verkeerde of onbekende barcode"""
     print("Audio: Verkeerde scan")
     speak("Scan-wrong.mp3")
     return jsonify({"status": "ok"})
 
+
 @app.post("/audio/scan_reminder")
 def audio_scan_reminder():
-    """Specifieke herinnering om medicijn te scannen"""
     print("Audio: Herinnering om te scannen")
-    
-    # Optioneel met LED feedback (blauw knipperen)
     play_with_led("Scan-reminder.mp3", 0, 150, 255)
     return jsonify({"status": "ok"})
+
 
 # =========================================================
 # START TIMER
@@ -542,22 +541,17 @@ def audio_scan_reminder():
 
 @app.post("/start_restock_timer")
 def start_restock_timer():
-
     print("TIMER START: Opa moet binnenkort bestellen.")
 
     RESTOCK_STATE["active"] = True
-
     RESTOCK_STATE["deadline"] = (
         datetime.datetime.now() +
         datetime.timedelta(seconds=GRACE_PERIOD_SECONDS)
     )
 
-    # AUDIO
     speak("Medication-time.mp3")
 
-    return jsonify({
-        "status": "started"
-    })
+    return jsonify({"status": "started"})
 
 
 # =========================================================
@@ -566,37 +560,26 @@ def start_restock_timer():
 
 @app.post("/notify_caregiver")
 def notify_caregiver():
-
     print("BESTELD: Opa heeft het gemeld.")
 
-    # STOP TIMER
     RESTOCK_STATE["active"] = False
     RESTOCK_STATE["deadline"] = None
 
-    # AUDIO
     speak("Message-sent.mp3")
 
-    # LED FEEDBACK
     if led and led.Ledsupported:
-
-        # Oranje = bericht maken
         led.strip.set_all_led_color(255, 100, 0)
         time.sleep(0.8)
 
-        # Blauw knipperen = verzenden
         for _ in range(3):
-
             led.strip.set_all_led_color(0, 0, 0)
             time.sleep(0.15)
-
             led.strip.set_all_led_color(0, 0, 255)
             time.sleep(0.15)
 
-        # Groen = succes
         led.strip.set_all_led_color(0, 255, 0)
         time.sleep(0.5)
 
-        # LEDs uit
         time.sleep(1)
         led.strip.set_all_led_color(0, 0, 0)
 
@@ -604,6 +587,7 @@ def notify_caregiver():
         "status": "sent",
         "message": "Robot interaction complete"
     })
+
 
 # =========================================================
 # CAMERA PRIVACY NOTIFICATION
@@ -615,6 +599,7 @@ def camera_warning():
     speak("Camera.mp3")
     return jsonify({"status": "ok"})
 
+
 # =========================================================
 # INVENTORY NOTIFICATION
 # =========================================================
@@ -625,6 +610,7 @@ def inventory_warning():
     speak("Inventory.mp3")
     return jsonify({"status": "ok"})
 
+
 # =========================================================
 # MAIN
 # =========================================================
@@ -632,7 +618,6 @@ def inventory_warning():
 print("Push token:", get_caregiver_token())
 
 if __name__ == "__main__":
-
     print("HTTP Medicatie Bridge draait op poort 5001...")
 
     try:
@@ -643,8 +628,6 @@ if __name__ == "__main__":
             threaded=True,
             use_reloader=False
         )
-
     except KeyboardInterrupt:
-
         if led:
             led.strip.set_all_led_color(0, 0, 0)
