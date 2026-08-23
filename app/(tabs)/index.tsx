@@ -1,3 +1,4 @@
+/* eslint-disable react/no-unescaped-entities */
 /* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Ionicons } from "@expo/vector-icons";
@@ -6,6 +7,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as Notifications from "expo-notifications";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import {
   ActivityIndicator,
   Alert,
@@ -31,13 +33,6 @@ import {
 } from "../../data/medications";
 import { supabase } from "../../lib/supabase";
 import { Pi } from "../../services/pi";
-
-// LET OP: de globale Notifications.setNotificationHandler(...) staat NIET
-// hier, maar centraal in app/_layout.tsx. setNotificationHandler is een
-// singleton — twee registraties laten elkaar willekeurig overschrijven
-// (welke module toevallig als laatste laadt "wint"), wat precies de oorzaak
-// was van het inconsistente badge-gedrag. Voeg hier dus geen tweede
-// registratie meer toe.
 
 type Task = {
   id: number;
@@ -97,6 +92,10 @@ export default function VandaagScreen() {
   // Bepaalt of de velden bewerkbaar zijn (knop toont "Bewerken" vs "Bewaar")
   const [isEditingSchedule, setIsEditingSchedule] = useState(false);
 
+  const [permission, requestPermission] = useCameraPermissions();
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanningTaskId, setScanningTaskId] = useState<number | null>(null);
+
   const [contact, setContact] = useState({
     name: "",
     relation: "",
@@ -137,11 +136,6 @@ export default function VandaagScreen() {
 
     checkScheduleLock();
 
-    // Zelfde vaste-naam-collision bug als eerder gefixt in tabs/_layout.tsx:
-    // een hardcoded channel-naam kan botsen met een oude instantie die nog
-    // aan het afmelden is (bv. bij snel wisselen van tabblad), wat een
-    // "cannot add postgres_changes callbacks ... after subscribe()" crash
-    // veroorzaakt. Elke mount krijgt daarom een unieke naam.
     const lockChannelName = `home-schedule-lock-${Math.random().toString(36).slice(2)}`;
     const channel = supabase
       .channel(lockChannelName)
@@ -500,10 +494,6 @@ export default function VandaagScreen() {
     }
   };
 
-  // Gedeelde helper: schrijft de in-app melding weg EN stuurt een echte push
-  // naar het toestel van de mantelzorger. Gebruikt door zowel het aanpassen
-  // als het verwijderen van een innamemoment, zodat beide consistent
-  // gedrag hebben i.p.v. dat enkel de eerste een echte push kreeg.
   const notifyCaregiverOfScheduleChange = async (
     title: string,
     body: string,
@@ -770,35 +760,55 @@ export default function VandaagScreen() {
     setSelectedDate(newDate);
   };
 
-  // 1e TIK: SLOT OPENEN & KNOP "GENOMEN" MAKEN
   const confirmMedication = async (id: number) => {
     if (role === "mantelzorger") return;
 
     const task = tasks.find((t) => t.id === id);
-    if (!task) return;
-    if (getTaskStatus(task) !== "ACTIONABLE") return;
+    if (!task || getTaskStatus(task) !== "ACTIONABLE") return;
 
-    try {
-      await fetch(`${ROBOT_API_URL}/lock_open`, {
-        method: "POST",
-      });
-    } catch (e) {
-      console.log("Kon slot niet openen");
+    // 1. Vraag cameratoestemming indien nodig
+    if (!permission?.granted) {
+      const permRes = await requestPermission();
+      if (!permRes.granted) {
+        Alert.alert("Camera vereist", "Cameratoegang is nodig om de barcode bij Mino te scannen.");
+        return;
+      }
     }
 
-    setTakingMedication(id);
+    try {
+      // 2. Open fysiek compartiment en laat Mino spreken
+      await fetch(`${ROBOT_API_URL}/lock_open`, { method: "POST" });
+      await fetch(`${ROBOT_API_URL}/audio/scan_medication`, { method: "POST" });
+    } catch (e) {
+      console.error("Fout bij openen slot of audio:", e);
+    }
 
-    setTimeout(async () => {
-      setTakingMedication((current) => {
-        if (current === id) {
-          fetch(`${ROBOT_API_URL}/lock_close`, {
-            method: "POST",
-          }).catch(() => { });
-          return null;
+    // 3. Open de barcodescanner op het scherm
+    setScanningTaskId(id);
+    setShowScanner(true);
+  };
+
+  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+    // Controleer of de gescande code overeenkomt met de fysieke barcode van Mino
+    if (data === "5420098712344") {
+      setShowScanner(false);
+
+      try {
+        // Meld aan de robot dat de scan geslaagd is (triggert audio, delayed lock & Supabase log)
+        await fetch(`${ROBOT_API_URL}/audio/scan_done`, { method: "POST" });
+
+        // Update lokale UI
+        if (scanningTaskId) {
+          finishMedication(scanningTaskId);
         }
-        return current;
-      });
-    }, 5000);
+      } catch (e) {
+        console.error("Fout bij afronden scan:", e);
+      }
+
+      setScanningTaskId(null);
+    } else {
+      Alert.alert("Onbekende Barcode", "Scan de barcode aan de binnenzijde van het medicatieklepje van Mino.");
+    }
   };
 
   // 2e TIK: INNAME AFRONDEN
@@ -1396,6 +1406,50 @@ export default function VandaagScreen() {
           )}
         </ScrollView>
       )}
+
+      {/* IN-APP BARCODE SCANNER MODAL */}
+      <Modal visible={showScanner} animationType="slide" onRequestClose={() => setShowScanner(false)}>
+        <View style={{ flex: 1, backgroundColor: "#000" }}>
+          <CameraView
+            style={StyleSheet.absoluteFillObject}
+            facing="back"
+            onBarcodeScanned={handleBarcodeScanned}
+            barcodeScannerSettings={{
+              barcodeTypes: ["ean13", "code128"],
+            }}
+          />
+
+          {/* Scanner Overlay / Richtkader */}
+          <SafeAreaView style={{ flex: 1, justifyContent: "space-between", alignItems: "center", padding: 24 }}>
+            <View style={{ backgroundColor: "rgba(0,0,0,0.7)", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
+              <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 16, textAlign: "center" }}>
+                Scan de barcode in Mino's klepje
+              </Text>
+            </View>
+
+            <View
+              style={{
+                width: 260,
+                height: 160,
+                borderColor: "#00f0ff",
+                borderWidth: 2,
+                borderRadius: 16,
+                backgroundColor: "transparent",
+              }}
+            />
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowScanner(false);
+                fetch(`${ROBOT_API_URL}/lock_close`, { method: "POST" }).catch(() => { });
+              }}
+              style={{ backgroundColor: "rgba(255,68,68,0.8)", paddingVertical: 12, paddingHorizontal: 32, borderRadius: 10 }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "bold" }}>ANNULEREN</Text>
+            </TouchableOpacity>
+          </SafeAreaView>
+        </View>
+      </Modal>
 
       {/* RUSTIGE BEWERK MODAL MET PRULLENBAK ICOON IN HEADER */}
       <Modal

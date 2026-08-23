@@ -510,21 +510,60 @@ def confirm_med(id):
 
 
 # =========================================================
-# SCAN MEDICATION AUDIO FEEDBACK
+# SCAN MEDICATION AUDIO FEEDBACK & HARDWARE VERIFICATIE
 # =========================================================
 
 @app.post("/audio/scan_medication")
 def audio_scan_medication():
+    """Instructie: 'Scan de barcode om te bevestigen dat je de medicatie hebt ingenomen'"""
     print("Audio: Scan medicijn instructie")
-    speak("Scan-medication.mp3")
+    play_with_led("Scan_confirm_medication.mp3", 0, 150, 255)
     return jsonify({"status": "ok"})
 
 
 @app.post("/audio/scan_done")
 def audio_scan_done():
-    print("Audio: Scan gelukt")
-    speak("Scan-done.mp3")
-    return jsonify({"status": "ok"})
+    """
+    Fysieke verificatie: doosje/klepje is gescand bij Mino.
+    1. Speelt succesgeluid: 'Goed gescand, je hebt de medicatie voor dit uur ingenomen'.
+    2. Wacht 6 seconden zodat de patiënt het klepje rustig kan sluiten.
+    3. Sluit het fysieke slot (CMD_LOCK#20).
+    4. Registreert inname in Supabase.
+    """
+    print("✅ Barcode geverifieerd aan de robot!")
+    
+    # 1. Speel nieuwe audio met groen LED-licht
+    play_with_led("Scan_confirm_medication_done.mp3", 0, 255, 0)
+
+    # 2. Vertraagde sluiting na 6 seconden
+    def delayed_lock():
+        print("Sluit compartiment na inname-tijd...")
+        send_cmd("CMD_LOCK#20")
+
+    threading.Timer(6.0, delayed_lock).start()
+
+    # 3. Registreer de inname in Supabase
+    try:
+        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        schedule_res = supabase.table("daily_schedule").select("*").execute()
+        if schedule_res.data:
+            current_task = schedule_res.data[0]
+            task_id = current_task.get("id")
+            
+            supabase.table("medication_logs").upsert(
+                {
+                    "task_id": task_id,
+                    "date": today_str,
+                    "taken": True,
+                    "taken_at": datetime.datetime.now().isoformat()
+                },
+                on_conflict="task_id, date"
+            ).execute()
+            print(f"Log weggeschreven voor taak {task_id}")
+    except Exception as e:
+        print(f"Fout bij wegschrijven scanverificatie in Supabase: {e}")
+
+    return jsonify({"status": "verified", "message": "Inname fysiek geverifieerd"})
 
 
 @app.post("/audio/scan_wrong")
