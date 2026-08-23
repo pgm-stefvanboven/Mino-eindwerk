@@ -471,6 +471,35 @@ export default function VandaagScreen() {
     return candidate.getTime() < new Date().getTime();
   };
 
+  const resolveEmergency = async () => {
+    try {
+      // 1. Sluit de noodtoegang tot de camera weer af in de centrale database
+      await supabase
+        .from("shared_settings")
+        .update({ emergency_camera_unlocked: false })
+        .eq("id", 1);
+
+      // 2. Lokale state en opslag herstellen
+      await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
+      setEmergencyActive(false);
+      setAlarmStage("idle");
+
+      // 3. Informeer mantelzorger dat de situatie onder controle is
+      await supabase.from("notifications").insert([
+        {
+          title: "Situatie hersteld",
+          body: "De gebruiker heeft bevestigd dat alles in orde is. Noodstatus is beëindigd.",
+          type: "medication",
+          read: false,
+        },
+      ]);
+
+      Alert.alert("Noodsituatie beëindigd", "Het systeem staat weer in normale werking en de camera is vergrendeld.");
+    } catch (e) {
+      console.error("Fout bij oplossen noodsituatie:", e);
+    }
+  };
+
   // Gedeelde helper: schrijft de in-app melding weg EN stuurt een echte push
   // naar het toestel van de mantelzorger. Gebruikt door zowel het aanpassen
   // als het verwijderen van een innamemoment, zodat beide consistent
@@ -835,8 +864,6 @@ export default function VandaagScreen() {
   };
 
   const startDemoScenario = async () => {
-    setShowDemoModal(true);
-
     try {
       const res = await fetch(`${ROBOT_API_URL}/start_demo_scenario`, {
         method: "POST",
@@ -845,16 +872,16 @@ export default function VandaagScreen() {
       const data = await res.json();
 
       if (data.stage === "warning") {
-        setDemoMissedCount(1);
-        setAlarmStage("waiting"); // Toont oranje status op het dashboard
+        setAlarmStage("waiting");
       } else if (data.stage === "emergency") {
-        setDemoMissedCount(2);
-        setAlarmStage("emergency"); // Toont rood escalatieblok
+        setAlarmStage("emergency");
         setEmergencyActive(true);
         await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
+        // De PrivacyModal wordt nu automatisch en uniek getriggerd via Supabase
       }
     } catch (error) {
       console.error("Fout bij starten scenario:", error);
+      Alert.alert("Fout", "Kon robot niet bereiken.");
     }
   };
 
@@ -1111,66 +1138,75 @@ export default function VandaagScreen() {
           {alarmStage === "emergency" && (
             <View
               style={{
-                backgroundColor: "rgba(255,68,68,0.15)",
+                backgroundColor: "rgba(255,68,68,0.12)",
                 borderColor: "#ff4444",
-                borderWidth: 1,
-                borderRadius: 12,
-                padding: 14,
+                borderWidth: 1.5,
+                borderRadius: 16,
+                padding: 18,
                 marginBottom: 20,
               }}
             >
-              <Text
-                style={{
-                  color: "#ff4444",
-                  fontWeight: "bold",
-                  fontSize: 18,
-                }}
-              >
-                Noodsituatie gedetecteerd
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="alert-circle" size={24} color="#ff4444" />
+                <Text
+                  style={{
+                    color: "#ff4444",
+                    fontWeight: "bold",
+                    fontSize: 17,
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  Noodsituatie gedetecteerd
+                </Text>
+              </View>
 
               <Text
                 style={{
                   color: "#ccc",
-                  marginTop: 8,
-                  lineHeight: 22,
+                  marginTop: 10,
+                  lineHeight: 20,
+                  fontSize: 13,
                 }}
               >
-                Na meerdere onbeantwoorde herinneringen werd deze mantelzorger
-                automatisch verwittigd:
+                Mino heeft herhaaldelijk geen inname geregistreerd. De mantelzorger is
+                automatisch verwittigd en de camera is vrijgegeven.
               </Text>
 
-              <Text
+              <View
                 style={{
-                  color: "#fff",
-                  fontWeight: "600",
-                  marginTop: 12,
+                  backgroundColor: "rgba(0,0,0,0.3)",
+                  borderRadius: 10,
+                  padding: 12,
+                  marginVertical: 12,
                 }}
               >
-                {contact.name}
-              </Text>
+                <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 14 }}>
+                  {contact.name || "Mantelzorger"} ({contact.relation || "Contact"})
+                </Text>
+                <Text style={{ color: "#aaa", fontSize: 12, marginTop: 2 }}>
+                  {contact.phone || "Geen telefoonnummer"}
+                </Text>
+              </View>
 
-              <Text style={{ color: "#bbb" }}>{contact.relation}</Text>
-
-              <Text
+              {/* HERSTELKNOPPEN: Zorgt dat het alarm verdwijnt en de status reset */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={resolveEmergency}
                 style={{
-                  color: "#e5e7eb",
-                  marginTop: 4,
+                  backgroundColor: "#ff4444",
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  alignItems: "center",
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  gap: 8,
                 }}
               >
-                {contact.phone}
-              </Text>
-
-              <Text
-                style={{
-                  color: "#ccc",
-                  marginTop: 12,
-                  lineHeight: 22,
-                }}
-              >
-                Cameratoegang werd tijdelijk vrijgegeven zodat de mantelzorger
-                de situatie kan beoordelen.
-              </Text>
+                <Ionicons name="checkmark-done" size={18} color="#fff" />
+                <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 13 }}>
+                  BEVESTIG SITUATIE VEILIG / RESET
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -1436,48 +1472,6 @@ export default function VandaagScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* DEMO MODAL */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={showDemoModal}
-        onRequestClose={() => setShowDemoModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View
-              style={[
-                styles.modalIconCircle,
-                { backgroundColor: demoMissedCount === 2 ? "#ef4444" : "#f59e0b" },
-              ]}
-            >
-              <Ionicons
-                name={demoMissedCount === 2 ? "alert-circle" : "time"}
-                size={32}
-                color="#fff"
-              />
-            </View>
-            <Text style={styles.modalTitle}>
-              {demoMissedCount === 2 ? "Escalatie: 2e Moment Gemist" : "1e Moment Gemist"}
-            </Text>
-            <Text style={styles.modalText}>
-              {demoMissedCount === 2
-                ? "Drempelwaarde overschreden: mantelzorger is gealarmeerd en de camera is ontgrendeld."
-                : "Discreet gelogd: Mino waarschuwt lokaal, maar stoort de mantelzorger nog niet."}
-            </Text>
-            <TouchableOpacity
-              style={[
-                styles.modalButton,
-                { backgroundColor: demoMissedCount === 2 ? "#ef4444" : "#007AFF" },
-              ]}
-              onPress={() => setShowDemoModal(false)}
-            >
-              <Text style={styles.modalButtonText}>BEGREPEN</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>

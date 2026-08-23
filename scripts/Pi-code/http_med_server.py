@@ -341,7 +341,8 @@ def set_volume():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-def play_with_led(audio_file, r, g, b):
+def _play_led_worker(audio_file, r, g, b):
+    """Interne worker die audio en LEDs afhandelt zonder de server-thread te blokkeren"""
     audio = threading.Thread(
         target=speak,
         args=(audio_file,),
@@ -359,6 +360,11 @@ def play_with_led(audio_file, r, g, b):
         led.strip.set_all_led_color(0, 0, 0)
 
     audio.join()
+
+
+def play_with_led(audio_file, r, g, b):
+    """Start de LED + Audio animatie direct in een aparte achtergrond-thread"""
+    threading.Thread(target=_play_led_worker, args=(audio_file, r, g, b), daemon=True).start()
 
 
 @app.post("/start_demo_scenario")
