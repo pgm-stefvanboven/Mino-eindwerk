@@ -776,26 +776,26 @@ export default function VandaagScreen() {
     }
 
     try {
-      // 2. Open fysiek compartiment en laat Mino spreken
+      // 2. Open the physical compartment and let Mino speak
       await fetch(`${ROBOT_API_URL}/lock_open`, { method: "POST" });
-      await fetch(`${ROBOT_API_URL}/audio/scan_medication`, { method: "POST" });
+      await fetch(`${ROBOT_API_URL}/audio/confirm_medication`, { method: "POST" });
     } catch (e) {
       console.error("Fout bij openen slot of audio:", e);
     }
 
-    // 3. Open de barcodescanner op het scherm
+    // 3. Open the barcodescanner on the screen and store the task ID for later use
     setScanningTaskId(id);
     setShowScanner(true);
   };
 
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
-    // Controleer of de gescande code overeenkomt met de fysieke barcode van Mino
+    // Verify that the scanned code matches Mino's physical barcode
     if (data === "5420098712344") {
       setShowScanner(false);
 
       try {
         // Meld aan de robot dat de scan geslaagd is (triggert audio, delayed lock & Supabase log)
-        await fetch(`${ROBOT_API_URL}/audio/scan_done`, { method: "POST" });
+        await fetch(`${ROBOT_API_URL}/audio/confirm_done`, { method: "POST" });
 
         // Update lokale UI
         if (scanningTaskId) {
