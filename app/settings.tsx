@@ -364,15 +364,40 @@ export default function SettingsScreen() {
   }
 
   const resetZorgScenario = async () => {
-    await supabase
-      .from("shared_settings")
-      .update({ emergency_camera_unlocked: false })
-      .eq("id", 1);
-    showModal(
-      "Scenario Gereset",
-      "De noodtoegang is ingetrokken en het scenario is gereset.",
-      "success",
-    );
+    try {
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      // 1. Sluit camera af in gedeelde instellingen
+      await supabase
+        .from("shared_settings")
+        .update({ emergency_camera_unlocked: false })
+        .eq("id", 1);
+
+      // 2. Verwijder de logs van vandaag zodat alle taken weer openstaan voor demo
+      await supabase
+        .from("medication_logs")
+        .delete()
+        .eq("date", todayStr);
+
+      // 3. Markeer noodmeldingen als afgehandeld
+      await supabase
+        .from("notifications")
+        .update({ read: true })
+        .eq("type", "emergency");
+
+      // 4. Sluit het fysieke slot op de robot
+      if (url) {
+        await fetch(`${url}/lock_close`, { method: "POST" }).catch(() => { });
+      }
+
+      showModal(
+        "Scenario Gereset",
+        "De noodtoegang is ingetrokken, het slot is vergrendeld en de innametaken staan weer open voor demonstratie.",
+        "success",
+      );
+    } catch (e) {
+      console.error("Fout bij resetten scenario:", e);
+    }
   };
 
   const confirmReset = () => {
