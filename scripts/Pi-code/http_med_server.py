@@ -148,23 +148,34 @@ def proxy_video_stream():
             except:
                 pass
 
+def execute_with_retry(query_fn, max_retries=2, delay=0.5):
+    """Voert een Supabase query uit met automatische retry bij verbroken sockets/stale connections."""
+    for attempt in range(max_retries + 1):
+        try:
+            return query_fn()
+        except Exception as e:
+            if attempt == max_retries:
+                print(f"❌ Database operatie definitief mislukt na {max_retries + 1} pogingen: {e}")
+                return None
+            print(f"⚠️ Verbindingsfout ({e}), poging {attempt + 1}/{max_retries} opnieuw...")
+            time.sleep(delay)
 
 # --- PUSH & DATABASE HELPERS ---
 def get_caregiver_token():
-    response = (
-        supabase
-        .table("shared_settings")
-        .select("caregiver_push_token")
-        .eq("id", 1)
-        .single()
-        .execute()
-    )
-
-    if response.data:
+    def _query():
+        return (
+            supabase
+            .table("shared_settings")
+            .select("caregiver_push_token")
+            .eq("id", 1)
+            .single()
+            .execute()
+        )
+    
+    response = execute_with_retry(_query)
+    if response and response.data:
         return response.data.get("caregiver_push_token")
-
     return None
-
 
 def send_push_notification(title, body, notification_type=None):
     token = get_caregiver_token()
@@ -204,34 +215,41 @@ def send_push_notification(title, body, notification_type=None):
 
 
 def save_notification(title, body, notification_type="emergency"):
-    response = (
-        supabase
-        .table("notifications")
-        .insert({
-            "title": title,
-            "body": body,
-            "type": notification_type,
-        })
-        .execute()
-    )
-
-    return response
-
+    def _insert():
+        return (
+            supabase
+            .table("notifications")
+            .insert({
+                "title": title,
+                "body": body,
+                "type": notification_type,
+            })
+            .execute()
+        )
+    return execute_with_retry(_insert)
 
 def trigger_escalation_protocol():
-    """Autonoom Noodprotocol: activeert audio, rood LED-licht, ontgrendelt camera en stuurt push."""
+    """Autonoom Noodprotocol: camera, alarm en notificaties draaien onafhankelijk van netwerkcrashes."""
     print("🚨 NOODPROTOCOL: Escalatiedrempel bereikt (2 gemiste momenten).")
     
+    # 1. Lokale fysieke feedback (werkt altijd direct)
     play_with_led("Emergency.mp3", 255, 0, 0)
     
+    # 2. Camera ontgrendelen in Supabase met retry
+    def _unlock():
+        return supabase.table("shared_settings").update({"emergency_camera_unlocked": True}).eq("id", 1).execute()
+    
+    execute_with_retry(_unlock)
+
+    # 3. Notificaties registreren en pushen
     title = "⚠️ Meerdere medicatiemomenten gemist"
     body = "Mino heeft 2 innames niet geregistreerd. Cameratoegang is tijdelijk ontgrendeld ter controle."
-    save_notification(title, body, "emergency")
-    send_push_notification(title, body, "emergency")
     
+    save_notification(title, body, "emergency")
     save_notification("Camera actief", "Mantelzorger werd verwittigd wegens herhaaldelijk gemiste medicatie.", "privacy")
     
-    supabase.table("shared_settings").update({"emergency_camera_unlocked": True}).eq("id", 1).execute()
+    # Push verzenden
+    send_push_notification(title, body, "emergency")
 
 
 # --- ACHTERGROND MONITOR ---
@@ -319,6 +337,26 @@ def monitor_loop():
                     time.sleep(2)
         else:
             time.sleep(1)
+
+            # 4. MEDICATION SCHEDULE CHECKER
+            try:
+                current_time_str = now.strftime("%H:%M")
+                # Haal schema op uit Supabase
+                sched = supabase.table("daily_schedule").select("*").eq("time", current_time_str).execute()
+
+                if sched.data:
+                    for item in sched.data:
+                        today_str = now.strftime("%Y-%m-%d")
+                        # Controleer of deze taak vandaag al geregistreerd is
+                        log = supabase.table("medication_logs").select("*")\
+                            .eq("task_id", item["id"])\
+                            .eq("date", today_str).execute()
+
+                        if not log.data:
+                            print(f"⏰ TIJD VOOR MEDICIJN: {item.get('amount')} (Taak {item.get('id')})")
+                            play_with_led("Medication-time.mp3", 0, 80, 255)
+            except Exception as e:
+                print(f"Fout bij automatische inname-controle: {e}")
 
 
 # Start achtergrond monitor
@@ -540,39 +578,28 @@ def audio_confirm_medication():
 @app.post("/audio/confirm_done")
 def audio_confirm_done():
     print("✅ Inname-barcode geverifieerd aan de robot!")
-    
-    # 1. Confirmsound with green LEDs
-    play_with_led("Scan_confirm_medication_done.mp3", 0, 255, 0)
 
-    # 2. Delayed lock after 10 seconds to allow user to take the medication
+    # 1. Bevestigingsgeluid + groene LED
+    play_with_led(
+        "Scan_confirm_medication_done.mp3",
+        0,
+        255,
+        0
+    )
+
+    # 2. Compartiment automatisch sluiten na 10 seconden
+    #    De app registreert de daadwerkelijke medicatie-inname
+    #    met het correcte task_id.
     def delayed_lock():
         print("Sluit compartiment na inname-tijd...")
         send_cmd("CMD_LOCK#20")
 
     threading.Timer(10.0, delayed_lock).start()
 
-    # 3. Registrer log in Supabase
-    try:
-        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        schedule_res = supabase.table("daily_schedule").select("*").execute()
-        if schedule_res.data:
-            current_task = schedule_res.data[0]
-            task_id = current_task.get("id")
-            
-            supabase.table("medication_logs").upsert(
-                {
-                    "task_id": task_id,
-                    "date": today_str,
-                    "taken": True,
-                    "taken_at": datetime.datetime.now().isoformat()
-                },
-                on_conflict="task_id, date"
-            ).execute()
-            print(f"Log weggeschreven voor taak {task_id}")
-    except Exception as e:
-        print(f"Fout bij wegschrijven scanverificatie in Supabase: {e}")
-
-    return jsonify({"status": "verified", "message": "Inname fysiek geverifieerd"})
+    return jsonify({
+        "status": "verified",
+        "message": "Inname fysiek geverifieerd"
+    })
 
 
 @app.post("/audio/scan_wrong")
