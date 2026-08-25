@@ -43,8 +43,13 @@ type Task = {
   amount: string;
 };
 
-const DEMO_MISS_LIMIT_SECONDS = 5;
+const DEMO_MISS_LIMIT_SECONDS = 120;
 const ROBOT_API_URL = "http://172.31.149.75:5001";
+
+const ESCALATION_GRACE_MS = 30000;
+const CLAIM_TTL_MS = 15000;
+const FRESH_TRIGGER_WINDOW_SECONDS = 600; // 10 minutes
+const MISSED_CHECKINS_BEFORE_ESCALATION = 2;
 
 // --- DATE LOGIC ---
 const isSameDay = (d1: Date, d2: Date) =>
@@ -63,6 +68,29 @@ const toLocalDateStr = (d: Date) => {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+};
+
+// --- DAGTELLER VOOR GEMISTE MOMENTEN (mantelzorg-drempel) ---
+type DailyTally = {
+  count: number;
+  status: "idle" | "escalating";
+  claimTs?: number;
+};
+
+const getDailyTallyKey = (dateStr: string) => `daily_missed_tally_${dateStr}`;
+
+const readDailyTally = async (dateStr: string): Promise<DailyTally> => {
+  const raw = await AsyncStorage.getItem(getDailyTallyKey(dateStr));
+  if (!raw) return { count: 0, status: "idle" };
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { count: 0, status: "idle" };
+  }
+};
+
+const writeDailyTally = async (dateStr: string, tally: DailyTally) => {
+  await AsyncStorage.setItem(getDailyTallyKey(dateStr), JSON.stringify(tally));
 };
 
 export default function VandaagScreen() {
@@ -84,6 +112,9 @@ export default function VandaagScreen() {
     "idle" | "reminder" | "waiting" | "emergency"
   >("idle");
   const automaticMissedProcessing = useRef<Set<string>>(new Set());
+  const triggeredReminders = useRef<Set<string>>(new Set());
+
+  const dailyTallyMutex = useRef<Promise<void>>(Promise.resolve());
   const [scheduleLocked, setScheduleLocked] = useState(false);
   const [taskStages, setTaskStages] = useState<{ [taskId: number]: string }>({});
 
@@ -170,6 +201,8 @@ export default function VandaagScreen() {
       const isUnlocked = emergencyUnlocked && !alwaysEnabled;
       if (isUnlocked && !wasUnlocked) {
         setPrivacyModalVisible(true);
+        setEmergencyActive(true);
+        setAlarmStage("emergency");
       } else if (!isUnlocked && wasUnlocked) {
         setPrivacyModalVisible(false);
       }
@@ -419,7 +452,7 @@ export default function VandaagScreen() {
       return "FUTURE_DAY";
 
     const [hours, minutes] = task.time.split(":").map(Number);
-    const taskTime = new Date();
+    const taskTime = new Date(selectedDate);
     taskTime.setHours(hours, minutes, 0, 0);
 
     const fiveMinBefore = new Date(taskTime.getTime() - 5 * 60 * 1000);
@@ -438,16 +471,31 @@ export default function VandaagScreen() {
     if (role !== "patient" || !isToday(selectedDate)) return;
 
     tasks.forEach((task) => {
-      if (task.taken) return;
-      if (task.time === "DEMO") return;
+      if (task.taken || task.time === "DEMO") return;
 
       const [hours, minutes] = task.time.split(":").map(Number);
       const taskTime = new Date(selectedDate);
       taskTime.setHours(hours, minutes, 0, 0);
 
-      // Bereken het verschil in seconden tussen nu en de innametijd
       const diffSeconds = (now.getTime() - taskTime.getTime()) / 1000;
+      const dateStr = toLocalDateStr(selectedDate);
+      const triggerKey = `${dateStr}_${task.id}`;
 
+      // 1. Eerste herinnering (0 - 5 seconden na innametijd)
+      if (diffSeconds >= 0 && diffSeconds < 5) {
+        if (!triggeredReminders.current.has(triggerKey)) {
+          triggeredReminders.current.add(triggerKey);
+
+          // Reset oude testdata voor dit moment zodat de 2e herinnering gegarandeerd afgaat
+          AsyncStorage.removeItem(`automatic_missed_${dateStr}_${task.id}`).catch(() => { });
+
+          fetch(`${ROBOT_API_URL}/start_reminder`, { method: "POST" }).catch((err) => {
+            console.error("Kon start_reminder niet bereiken:", err);
+          });
+        }
+      }
+
+      // 2. Tweede herinnering & inhaalvenster na 2 minuten (120s)
       if (diffSeconds >= DEMO_MISS_LIMIT_SECONDS) {
         handleAutomaticMissedMedication(task);
       }
@@ -476,8 +524,6 @@ export default function VandaagScreen() {
     setIsEditingSchedule(false);
   };
 
-  // Enkel cijfers en de ':'-scheiding toestaan tijdens het typen — voorkomt
-  // dat er letters of andere tekens in het tijdstip terechtkomen.
   const handleEditTimeChange = (text: string) => {
     const digitsOnly = text.replace(/[^0-9]/g, "").slice(0, 4);
     const formatted =
@@ -499,18 +545,87 @@ export default function VandaagScreen() {
   const isValidTimeFormat = (timeStr: string): boolean =>
     /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/.test(timeStr);
 
-  // Enkel relevant wanneer we vandaag bekijken — voor een toekomstige dag
-  // heeft "in het verleden" geen betekenis.
   const isTimeInPast = (timeStr: string): boolean => {
     if (!isToday(selectedDate)) return false;
     if (!isValidTimeFormat(timeStr)) return false;
 
     const [hh, mm] = timeStr.split(":").map(Number);
-    const candidate = new Date();
+    const candidate = new Date(selectedDate);
     candidate.setHours(hh, mm, 0, 0);
 
     return candidate.getTime() < new Date().getTime();
   };
+
+  const withDailyTallyLock = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const run = dailyTallyMutex.current.then(fn, fn);
+    dailyTallyMutex.current = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  };
+
+  const sendCareEmergencyNotification = async () => {
+    setAlarmStage("emergency");
+    setEmergencyActive(true);
+    await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
+
+    const res = await fetch(`${ROBOT_API_URL}/care_emergency`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error(`Server retourneerde HTTP ${res.status}`);
+  };
+
+  const registerMissedCheckIn = (dateStr: string) =>
+    withDailyTallyLock(async () => {
+      const tally = await readDailyTally(dateStr);
+      const newCount = tally.count + 1;
+
+      if (newCount < MISSED_CHECKINS_BEFORE_ESCALATION) {
+        await writeDailyTally(dateStr, { count: newCount, status: "idle" });
+        console.log(
+          `ℹ️ Gemist moment ${newCount}/${MISSED_CHECKINS_BEFORE_ESCALATION} vandaag — mantelzorger nog niet verwittigd.`
+        );
+        return;
+      }
+
+      console.log(
+        `🚨 ${newCount} gemiste momenten vandaag → mantelzorger wordt verwittigd (derde melding).`
+      );
+
+      await writeDailyTally(dateStr, {
+        count: newCount,
+        status: "escalating",
+        claimTs: Date.now(),
+      });
+
+      try {
+        await sendCareEmergencyNotification();
+        await writeDailyTally(dateStr, { count: 0, status: "idle" });
+      } catch (err) {
+        console.error(
+          "Fout bij versturen mantelzorgmelding (wordt hervat op een volgende tick):",
+          err
+        );
+      }
+    });
+
+  const retryStaleDailyEscalation = (dateStr: string) =>
+    withDailyTallyLock(async () => {
+      const tally = await readDailyTally(dateStr);
+      if (tally.status !== "escalating") return;
+      if (!tally.claimTs || Date.now() - tally.claimTs < CLAIM_TTL_MS) return;
+
+      console.log("🔁 Vorige mantelzorgmelding niet bevestigd → opnieuw proberen.");
+      try {
+        await sendCareEmergencyNotification();
+        await writeDailyTally(dateStr, { count: 0, status: "idle" });
+      } catch (err) {
+        console.error("Herhaalde poging mantelzorgmelding mislukt:", err);
+        await writeDailyTally(dateStr, { ...tally, claimTs: Date.now() });
+      }
+    });
 
   const resolveEmergency = async () => {
     try {
@@ -522,45 +637,15 @@ export default function VandaagScreen() {
         .update({ emergency_camera_unlocked: false })
         .eq("id", 1);
 
-      // 2. Schrijf voor alle taken van vandaag de noodstatus weg in AsyncStorage
-      for (const t of tasks) {
-        const stageKey = `automatic_missed_${dateStr}_${t.id}`;
-        const raw = await AsyncStorage.getItem(stageKey);
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed.stage === "emergency" || parsed.stage === "emergency_sending" || parsed.stage === "second_reminder") {
-              await AsyncStorage.setItem(
-                stageKey,
-                JSON.stringify({ stage: "resolved", ts: Date.now() })
-              );
-            }
-          } catch {
-            await AsyncStorage.setItem(
-              stageKey,
-              JSON.stringify({ stage: "resolved", ts: Date.now() })
-            );
-          }
-        }
-      }
+      // 2. Resetting the daily counter: The caregiver has confirmed this, so two more missed moments are needed before the next notification.
+      await writeDailyTally(dateStr, { count: 0, status: "idle" });
 
       await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
-
-      // 3. Lokale state resetten zodat de rode card direct weggaat en wegblijft
-      setTaskStages((prev) => {
-        const updated = { ...prev };
-        Object.keys(updated).forEach((k) => {
-          if (updated[Number(k)] === "emergency" || updated[Number(k)] === "second_reminder") {
-            updated[Number(k)] = "resolved";
-          }
-        });
-        return updated;
-      });
 
       setEmergencyActive(false);
       setAlarmStage("idle");
 
-      // 4. Notificatie loggen
+      // 3. Log Notifications
       await supabase.from("notifications").insert([
         {
           title: "Situatie hersteld",
@@ -580,10 +665,6 @@ export default function VandaagScreen() {
     title: string,
     body: string,
   ) => {
-    // In-app record (badge, notificatielijst). Eigen type "schedule_change"
-    // i.p.v. "medication" — dat laatste routeert naar het voorraadscherm
-    // /medications, wat hier niet klopt: dit gaat over het innamemoment,
-    // niet over medicatiebeheer.
     await supabase.from("notifications").insert([
       {
         title,
@@ -632,7 +713,7 @@ export default function VandaagScreen() {
   const handleSaveTaskEdit = async () => {
     if (!editingTask) return;
 
-    // Nog niet in bewerkmodus? Eerste tik = enkel de velden ontgrendelen.
+    // Not in edit mode yet? First tap = just unlock the fields.
     if (!isEditingSchedule) {
       setIsEditingSchedule(true);
       return;
@@ -666,7 +747,7 @@ export default function VandaagScreen() {
     const isTimeChanged = editingTask.time !== editTime;
     const oldTime = editingTask.time;
 
-    // 1. Update de daily_schedule tabel in Supabase
+    // 1. Update the daily_schedule table in Supabase
     await updateScheduleItem({
       id: editingTask.id,
       medId: editingTask.medId,
@@ -674,7 +755,7 @@ export default function VandaagScreen() {
       amount: editAmount,
     });
 
-    // 2. Indien de patiënt het innametijdstip heeft gewijzigd: MELDING STUREN NAAR MANTELZORGER!
+    // 2. If the patient has changed the time of administration: NOTIFY THE CAREGIVER!
     if (isTimeChanged && role === "patient") {
       const cleanMedName = editingTask.name.replace(/^[0-9]+x\s*/, "");
       await notifyCaregiverOfScheduleChange(
@@ -777,12 +858,28 @@ export default function VandaagScreen() {
       taskTime.setHours(hours, minutes, 0, 0);
       const triggerDate = new Date(taskTime.getTime() - 5 * 60 * 1000);
 
-      // Tijdstip al voorbij? Niets (meer) in te plannen.
+      // Is it already past that time? There's nothing left to schedule.
       if (triggerDate.getTime() <= Date.now()) {
         await Notifications.cancelScheduledNotificationAsync(
           identifier,
         ).catch(() => { });
         return;
+      }
+
+      if (taskTime.getTime() > Date.now()) {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `reminder-exact-${toLocalDateStr(selectedDate)}-${task.id}`,
+          content: {
+            title: "💊 Tijd voor je medicatie!",
+            body: `Neem nu je ${task.name} in via Mino.`,
+            sound: "default",
+            badge: 1,
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: taskTime,
+          },
+        });
       }
 
       await Notifications.scheduleNotificationAsync({
@@ -795,8 +892,6 @@ export default function VandaagScreen() {
           data: { type: "reminder_5min", route: "/notifications" },
         },
         trigger: {
-          // Als je Expo SDK ouder is dan SDK 50 en dit een type-fout geeft,
-          // vervang dit object gewoon door: trigger: triggerDate
           type: Notifications.SchedulableTriggerInputTypes.DATE,
           date: triggerDate,
         },
@@ -832,11 +927,11 @@ export default function VandaagScreen() {
     const status = getTaskStatus(task);
     const stage = taskStages[task.id];
 
-    // Alleen openen als het moment actueel is, OF tijdens het inhaalvenster van melding 2
+    // Open only when the event is current, OR during the catch-up window for notification 2
     const canTake = status === "ACTIONABLE" || (status === "MISSED_TODAY" && stage === "second_reminder");
     if (!canTake) return;
 
-    // 1. Vraag cameratoestemming indien nodig
+    // 1. Request permission to use a camera if necessary
     if (!permission?.granted) {
       const permRes = await requestPermission();
       if (!permRes.granted) {
@@ -862,10 +957,10 @@ export default function VandaagScreen() {
       setShowScanner(false);
 
       try {
-        // Meld aan de robot dat de scan geslaagd is (triggert audio, delayed lock & Supabase log)
+        // Notify the robot that the scan was successful (triggers audio, delayed lock, and Supabase log)
         await fetch(`${ROBOT_API_URL}/audio/confirm_done`, { method: "POST" });
 
-        // Update lokale UI
+        // Update Local UI
         if (scanningTaskId) {
           finishMedication(scanningTaskId);
         }
@@ -879,17 +974,17 @@ export default function VandaagScreen() {
     }
   };
 
-  // 2e TIK: INNAME AFRONDEN
+  // --- RECORDING OF INTAKE (SUPABASE + LOCAL) ---
   const finishMedication = async (id: number) => {
     if (role === "mantelzorger") return;
 
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
 
-    // Stop eventuele herinnering
+    // Stop any reminders
     await Pi.stopReminder().catch(() => { });
 
-    // Demo-taken niet persistent opslaan
+    // Do not save demo tasks persistently
     if (task.time === "DEMO" || task.id === 106) {
       setTasks((prevTasks) =>
         prevTasks.map((t) => (t.id === id ? { ...t, taken: true } : t))
@@ -909,7 +1004,7 @@ export default function VandaagScreen() {
     const dateStr = toLocalDateStr(selectedDate);
 
     try {
-      // 1. Registreer in Supabase
+      // 1. Sign up for Supabase
       const { error: logError } = await supabase
         .from("medication_logs")
         .upsert(
@@ -926,7 +1021,7 @@ export default function VandaagScreen() {
         throw new Error(`Medicatie-log kon niet worden opgeslagen: ${logError.message}`);
       }
 
-      // 2. Lokale takenlijst bijwerken
+      // 2. Update the local task list
       const newTasks = tasks.map((t) =>
         t.id === id ? { ...t, taken: true } : t
       );
@@ -935,12 +1030,12 @@ export default function VandaagScreen() {
       await AsyncStorage.setItem(dateKey, JSON.stringify(newTasks));
       setTasks(newTasks);
 
-      // 3. Voorraad verminderen
+      // 3. Reduce inventory
       await decreaseStock(task.medId, task.amount);
       const updatedMeds = await getMedications();
       setLowStockMeds(updatedMeds.filter((m) => m.stock < 10));
 
-      // 4. Noodtoegang en camera direct vergrendelen in Supabase
+      // 4. Lock Emergency Access and Camera Immediately in Supabase
       await supabase
         .from("shared_settings")
         .update({ emergency_camera_unlocked: false })
@@ -948,7 +1043,7 @@ export default function VandaagScreen() {
 
       await AsyncStorage.removeItem("CAMERA_EMERGENCY_ACCESS");
 
-      // 5. Status markeren als 'taken' om verdere meldingen te stoppen
+      // 5. Mark the status as “tasks” to stop further notifications
       const stageKey = `automatic_missed_${dateStr}_${id}`;
       await AsyncStorage.setItem(
         stageKey,
@@ -984,24 +1079,13 @@ export default function VandaagScreen() {
         setAlarmStage("emergency");
         setEmergencyActive(true);
         await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
-        // De PrivacyModal wordt nu automatisch en uniek getriggerd via Supabase
+        // The PrivacyModal is now triggered automatically via Supabase and unit
       }
     } catch (error) {
       console.error("Fout bij starten scenario:", error);
       Alert.alert("Fout", "Kon robot niet bereiken.");
     }
   };
-
-  // Hoe lang de patiënt krijgt tussen de tweede herinnering en de escalatie.
-  const ESCALATION_GRACE_MS = 30000;
-
-  // Hoe lang een "emergency_sending"-claim geldig blijft. Als binnen dit
-  // venster een andere (mogelijk overlappende) run dezelfde taak probeert
-  // te verwerken, wacht die gewoon i.p.v. ook te escaleren. Verloopt de
-  // claim zonder ooit bevestigd te zijn (stage "emergency"), dan gaan we
-  // ervan uit dat die poging gefaald/gecrasht is en proberen we opnieuw.
-  const CLAIM_TTL_MS = 15000;
-
 
   const handleAutomaticMissedMedication = async (task: Task) => {
     if (role !== "patient") return;
@@ -1012,14 +1096,16 @@ export default function VandaagScreen() {
 
     if (!isToday(selectedDate)) return;
 
-    // Alleen momenten die daadwerkelijk voorbij zijn
+    // Only moments that are truly over
     const [hours, minutes] = task.time.split(":").map(Number);
     const taskTime = new Date(selectedDate);
     taskTime.setHours(hours, minutes, 0, 0);
 
     if (now <= taskTime) return;
 
-    // Voorkom overlappende async runs binnen dezelfde tick
+    const diffSeconds = (now.getTime() - taskTime.getTime()) / 1000;
+
+    // Prevent overlapping async runs within the same tick
     const lockKey = `${dateStr}_${task.id}`;
     if (automaticMissedProcessing.current.has(lockKey)) return;
     automaticMissedProcessing.current.add(lockKey);
@@ -1037,18 +1123,18 @@ export default function VandaagScreen() {
         }
       }
 
-      if (stored?.stage === "taken" || stored?.stage === "emergency") {
-        return;
-      }
-
+      // Final statuses for this specific intake instance. “missed_counted” and “missed_stale” are the new final statuses; ‘emergency’ and “emergency_sending” remain here solely to identify data saved earlier (before this change), so that it is not processed again.
       if (
-        stored?.stage === "emergency_sending" &&
-        Date.now() - stored.ts < CLAIM_TTL_MS
+        stored?.stage === "taken" ||
+        stored?.stage === "missed_stale" ||
+        stored?.stage === "missed_counted" ||
+        stored?.stage === "emergency" ||
+        stored?.stage === "emergency_sending"
       ) {
         return;
       }
 
-      // Taak ondertussen alsnog ingenomen -> afronden
+      // Task has since been assigned -> complete
       if (task.taken) {
         await AsyncStorage.setItem(
           stageKey,
@@ -1058,16 +1144,25 @@ export default function VandaagScreen() {
         return;
       }
 
-      // Stap 1: Tweede herinnering sturen en inhaalvenster openen
-      if (!stored) {
-        console.log(`⚠️ Medicatiemoment ${task.id} gemist → tweede herinnering`);
+      // Step 1: Send a second reminder and open the grace period
+      if (!stored || stored.stage === "missed_stale" || stored.stage === "missed_counted") {
+        // Als het moment al langer dan 10 minuten geleden is:
+        if (diffSeconds > FRESH_TRIGGER_WINDOW_SECONDS) {
+          await AsyncStorage.setItem(
+            stageKey,
+            JSON.stringify({ stage: "missed_stale", ts: Date.now() })
+          );
+          setTaskStages((prev) => ({ ...prev, [task.id]: "missed_stale" }));
+          return;
+        }
 
-        const res = await fetch(`${ROBOT_API_URL}/second_reminder`, {
+        // Speel tweede herinnering af op robot
+        fetch(`${ROBOT_API_URL}/second_reminder`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" }
-        });
-        if (!res.ok) throw new Error(`Server retourneerde HTTP ${res.status}`);
+          headers: { "Content-Type": "application/json" },
+        }).catch((err) => console.error("Fout bij second_reminder:", err));
 
+        // Zet status lokaal én in storage op 'second_reminder' met de huidige timestamp
         await AsyncStorage.setItem(
           stageKey,
           JSON.stringify({ stage: "second_reminder", ts: Date.now() })
@@ -1078,18 +1173,15 @@ export default function VandaagScreen() {
         return;
       }
 
-      // Controleer of de gratieperiode voorbij is
-      const readyToEscalate =
-        (stored.stage === "second_reminder" &&
-          Date.now() - stored.ts >= ESCALATION_GRACE_MS) ||
-        (stored.stage === "emergency_sending" &&
-          Date.now() - stored.ts >= CLAIM_TTL_MS);
-
-      if (!readyToEscalate) {
+      // Check whether the grace period has ended
+      if (
+        stored.stage !== "second_reminder" ||
+        Date.now() - stored.ts < ESCALATION_GRACE_MS
+      ) {
         return;
       }
 
-      // Controleer rechtstreeks in Supabase of de inname niet alsnog geregistreerd werd
+      // Check directly in Supabase whether the intake has been registered
       const { data, error } = await supabase
         .from("medication_logs")
         .select("taken")
@@ -1113,30 +1205,17 @@ export default function VandaagScreen() {
         return;
       }
 
-      // Stap 2: Escalatie naar noodtoestand na verstrijken tijd
-      console.log(`🚨 Medicatiemoment ${task.id} blijft gemist → escalatie`);
+      // Step 2: This particular moment has now been definitively missed. This does not automatically escalate to the caregiver; that only happens when this is the second missed moment of the day (see the MissedCheckIn register and MISSED_CHECKINS_BEFORE_ESCALATION).
+      console.log(`❌ Medicatiemoment ${task.id} blijft gemist na inhaalvenster.`);
 
       await AsyncStorage.setItem(
         stageKey,
-        JSON.stringify({ stage: "emergency_sending", ts: Date.now() })
+        JSON.stringify({ stage: "missed_counted", ts: Date.now() })
       );
+      setTaskStages((prev) => ({ ...prev, [task.id]: "missed_counted" }));
+      setAlarmStage("idle");
 
-      setAlarmStage("emergency");
-      setEmergencyActive(true);
-      await AsyncStorage.setItem("CAMERA_EMERGENCY_ACCESS", "true");
-
-      const resEmergency = await fetch(`${ROBOT_API_URL}/care_emergency`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
-      if (!resEmergency.ok) throw new Error(`Server retourneerde HTTP ${resEmergency.status}`);
-
-      await AsyncStorage.setItem(
-        stageKey,
-        JSON.stringify({ stage: "emergency", ts: Date.now() })
-      );
-
-      setTaskStages((prev) => ({ ...prev, [task.id]: "emergency" }));
+      await registerMissedCheckIn(dateStr);
     } catch (error) {
       console.error("Fout tijdens automatische escalatie:", error);
     } finally {
@@ -1290,7 +1369,7 @@ export default function VandaagScreen() {
                             gap: 8,
                           }}
                         >
-                          {/* Linkerkant: Medicijnnaam (krimpt netjes bij lange namen) */}
+                          {/* Left side: Drug name (wraps neatly for long names) */}
                           <Text
                             style={[styles.stockChipName, { flex: 1 }]}
                             numberOfLines={1}
@@ -1299,7 +1378,7 @@ export default function VandaagScreen() {
                             {med.name}
                           </Text>
 
-                          {/* Rechterkant: Status + chevron (breekt nooit af naar nieuwe regel) */}
+                          {/* Right side: Status + chevron (never wraps to a new line) */}
                           <View
                             style={{
                               flexDirection: "row",
@@ -1447,7 +1526,7 @@ export default function VandaagScreen() {
                 </Text>
               </View>
 
-              {/* HERSTELKNOPPEN: Zorgt dat het alarm verdwijnt en de status reset */}
+              {/* RESET BUTTONS: Causes the alarm to disappear and resets the status */}
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={resolveEmergency}
@@ -1484,7 +1563,7 @@ export default function VandaagScreen() {
                 let btnText = "";
                 let textColor = "white";
 
-                // Enkel te bewerken als het nog niet ingenomen of voorbij is
+                // Can only be edited if it hasn't started yet or is over
                 const canEditThisTask =
                   status !== "TAKEN" && !status.includes("MISSED");
 
@@ -1542,7 +1621,7 @@ export default function VandaagScreen() {
                   case "MISSED_TODAY":
                     const currentStage = taskStages[task.id];
 
-                    // Alleen 'INHALEN' toestaan tussen melding 2 en melding 3
+                    // Allow “OVERTAKING” only between marker 2 and marker 3
                     if (role === "patient" && currentStage === "second_reminder") {
                       btnStyle = {
                         backgroundColor: "rgba(255, 170, 0, 0.15)",
@@ -1555,7 +1634,7 @@ export default function VandaagScreen() {
                       textColor = "#ffaa00";
                       isDisabled = false;
                     } else {
-                      // Na melding 3 (emergency) of voor mantelzorger: definitief vergrendeld
+                      // After report 3 (emergency) or for a caregiver: permanently locked
                       btnStyle = styles.btnMissed;
                       btnText = "GEMIST";
                       iconName = "close";
@@ -1603,7 +1682,6 @@ export default function VandaagScreen() {
                       {index < tasks.length - 1 && <View style={styles.line} />}
                     </View>
 
-                    {/* OVERZICHTELIJKE CARD */}
                     <View style={styles.compactContent}>
                       <View style={{ flex: 1 }}>
                         <Text
@@ -1619,7 +1697,7 @@ export default function VandaagScreen() {
                         <Text style={styles.nameText}>{task.name}</Text>
                       </View>
 
-                      {/* BEWERK PICOTGRAM / SLOTJE (ENKEL ALS MOMENT NOG NIET VOORBIJ/INGENOMEN IS) */}
+                      {/* EDIT BUTTON (ONLY IF THE MOMENT HAS NOT YET PASSED OR BEEN TAKEN) */}
                       {canEditThisTask && (
                         <TouchableOpacity
                           onPress={() => handleOpenEditModal(task)}
@@ -1723,7 +1801,7 @@ export default function VandaagScreen() {
         </View>
       </Modal>
 
-      {/* RUSTIGE BEWERK MODAL MET PRULLENBAK ICOON IN HEADER */}
+      {/* EDIT MODAL WITH TRASH CAN ICON IN THE HEADER */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -1732,7 +1810,6 @@ export default function VandaagScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.editModalContent}>
-            {/* KOP MET TITEL EN SUBTIELE PRULLENBAK RECHTSBOVEN */}
             <View style={styles.modalHeaderRow}>
               <Text style={styles.editModalTitle}>Innamemoment Aanpassen</Text>
               <TouchableOpacity
@@ -1955,7 +2032,6 @@ const styles = StyleSheet.create({
   demoLink: { alignSelf: "center", marginTop: 20, padding: 10 },
   demoLinkText: { color: "#333", fontSize: 12 },
 
-  // STYLING BEWERK MODAL
   editModalContent: {
     backgroundColor: "#1c1c1e",
     width: "85%",
