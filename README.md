@@ -86,9 +86,7 @@ Dit project werd ontwikkeld en gevalideerd als een **functioneel afstudeerprotot
 
 ## 7. Contact
 
-Student: **Stef Van Boven**
-
-[Github](https://github.com/pgm-stefvanboven)
+Student: **Stef Van Boven** [(Github)](https://github.com/pgm-stefvanboven)
 
 Opleiding: Bachelor Grafische en Digitale Media – IMD  
 Instelling: Arteveldehogeschool Gent  
